@@ -23,12 +23,24 @@ public final class SectionScanner {
     }
   }
 
-  public record SectionKey(ResourceId dimension, int x, int y, int z) {}
+  public record SectionKey(ResourceId dimension, int x, int y, int z) {
+    public SectionKey {
+      Objects.requireNonNull(dimension, "dimension");
+    }
+  }
 
+  /** Known cells are either true or false; cells absent from knownMask remain unknown. */
   public record SectionResult(SectionKey key, BitSet trueMask, BitSet knownMask) {
     public SectionResult {
+      Objects.requireNonNull(key, "key");
       trueMask = (BitSet) trueMask.clone();
       knownMask = (BitSet) knownMask.clone();
+      if (trueMask.length() > SECTION_VOLUME || knownMask.length() > SECTION_VOLUME)
+        throw new IllegalArgumentException("Section mask exceeds " + SECTION_VOLUME + " cells");
+      var unknownTrue = (BitSet) trueMask.clone();
+      unknownTrue.andNot(knownMask);
+      if (!unknownTrue.isEmpty())
+        throw new IllegalArgumentException("True cells must also be known");
     }
 
     @Override
@@ -48,13 +60,63 @@ public final class SectionScanner {
     public int unknownCount() {
       return SECTION_VOLUME - knownMask.cardinality();
     }
+
+    /** Complements known cells inside a finite domain; cells outside it stay known false. */
+    public SectionResult not(BitSet domain) {
+      Objects.requireNonNull(domain, "domain");
+      if (domain.length() > SECTION_VOLUME)
+        throw new IllegalArgumentException("Section domain exceeds " + SECTION_VOLUME + " cells");
+      var truth = falseMask();
+      truth.and(domain);
+      var known = (BitSet) knownMask.clone();
+      known.and(domain);
+      var outside = new BitSet(SECTION_VOLUME);
+      outside.set(0, SECTION_VOLUME);
+      outside.andNot(domain);
+      known.or(outside);
+      return new SectionResult(key, truth, known);
+    }
+
+    /** Combines two masks from the same section using three-valued conjunction. */
+    public SectionResult and(SectionResult other) {
+      sameKey(other);
+      var truth = (BitSet) trueMask.clone();
+      truth.and(other.trueMask);
+      var known = falseMask();
+      known.or(other.falseMask());
+      known.or(truth);
+      return new SectionResult(key, truth, known);
+    }
+
+    /** Combines two masks from the same section using three-valued disjunction. */
+    public SectionResult or(SectionResult other) {
+      sameKey(other);
+      var truth = (BitSet) trueMask.clone();
+      truth.or(other.trueMask);
+      var known = falseMask();
+      known.and(other.falseMask());
+      known.or(truth);
+      return new SectionResult(key, truth, known);
+    }
+
+    private BitSet falseMask() {
+      var falseMask = (BitSet) knownMask.clone();
+      falseMask.andNot(trueMask);
+      return falseMask;
+    }
+
+    private void sameKey(SectionResult other) {
+      if (!key.equals(Objects.requireNonNull(other, "other").key))
+        throw new IllegalArgumentException("Cannot combine different sections");
+    }
   }
 
-  /** Scans at most {@code maxSections}; cells outside bounds are known false in the masks. */
+  /**
+   * Scans the first {@code maxSections} in y/z/x order, without retaining a cursor. Cells outside
+   * bounds are known false in the masks; use {@link #scanSection} to schedule later keys.
+   */
   public List<SectionResult> scan(
       Bounds bounds, Compiler.Bound scope, Compiler.Bound select, Facts facts, int maxSections) {
-    if (scope.type() != SetType.POS || select.type() != SetType.POS)
-      throw new IllegalArgumentException("Expected PosSet");
     if (maxSections <= 0) throw new IllegalArgumentException("Positive section budget required");
     var results = new ArrayList<SectionResult>();
     for (int sy = Math.floorDiv(bounds.minY(), SECTION_SIZE);
@@ -67,36 +129,49 @@ public final class SectionScanner {
             sx <= Math.floorDiv(bounds.maxX(), SECTION_SIZE);
             sx++) {
           if (results.size() >= maxSections) return List.copyOf(results);
-          var key = new SectionKey(bounds.dimension(), sx, sy, sz);
-          var trueMask = new BitSet(SECTION_VOLUME);
-          var knownMask = new BitSet(SECTION_VOLUME);
-          knownMask.set(0, SECTION_VOLUME);
-          long baseX = (long) sx * SECTION_SIZE,
-              baseY = (long) sy * SECTION_SIZE,
-              baseZ = (long) sz * SECTION_SIZE;
-          for (long y = Math.max(baseY, bounds.minY());
-              y <= Math.min(baseY + LOCAL_MASK, bounds.maxY());
-              y++)
-            for (long z = Math.max(baseZ, bounds.minZ());
-                z <= Math.min(baseZ + LOCAL_MASK, bounds.maxZ());
-                z++)
-              for (long x = Math.max(baseX, bounds.minX());
-                  x <= Math.min(baseX + LOCAL_MASK, bounds.maxX());
-                  x++) {
-                int index =
-                    (int)
-                        (((y - baseY) << (2 * SECTION_SHIFT))
-                            | ((z - baseZ) << SECTION_SHIFT)
-                            | (x - baseX));
-                var p = new Position(bounds.dimension(), (int) x, (int) y, (int) z);
-                Truth inScope = scope.at(facts, p);
-                Truth value =
-                    inScope == Truth.FALSE ? Truth.FALSE : inScope.and(select.at(facts, p));
-                if (value == Truth.UNKNOWN) knownMask.clear(index);
-                if (value == Truth.TRUE) trueMask.set(index);
-              }
-          results.add(new SectionResult(key, trueMask, knownMask));
+          results.add(
+              scanSection(
+                  bounds, new SectionKey(bounds.dimension(), sx, sy, sz), scope, select, facts));
         }
     return List.copyOf(results);
+  }
+
+  /**
+   * Scans one section from a caller-supplied capture. Cells outside {@code bounds} are known false;
+   * the key must belong to the bounds' dimension.
+   */
+  public SectionResult scanSection(
+      Bounds bounds, SectionKey key, Compiler.Bound scope, Compiler.Bound select, Facts facts) {
+    if (scope.type() != SetType.POS || select.type() != SetType.POS)
+      throw new IllegalArgumentException("Expected PosSet");
+    if (!key.dimension().equals(bounds.dimension()))
+      throw new IllegalArgumentException("Section dimension differs from bounds");
+    var trueMask = new BitSet(SECTION_VOLUME);
+    var knownMask = new BitSet(SECTION_VOLUME);
+    knownMask.set(0, SECTION_VOLUME);
+    long baseX = (long) key.x() * SECTION_SIZE,
+        baseY = (long) key.y() * SECTION_SIZE,
+        baseZ = (long) key.z() * SECTION_SIZE;
+    for (long y = Math.max(baseY, bounds.minY());
+        y <= Math.min(baseY + LOCAL_MASK, bounds.maxY());
+        y++)
+      for (long z = Math.max(baseZ, bounds.minZ());
+          z <= Math.min(baseZ + LOCAL_MASK, bounds.maxZ());
+          z++)
+        for (long x = Math.max(baseX, bounds.minX());
+            x <= Math.min(baseX + LOCAL_MASK, bounds.maxX());
+            x++) {
+          int index =
+              (int)
+                  (((y - baseY) << (2 * SECTION_SHIFT))
+                      | ((z - baseZ) << SECTION_SHIFT)
+                      | (x - baseX));
+          var p = new Position(bounds.dimension(), (int) x, (int) y, (int) z);
+          Truth inScope = scope.at(facts, p);
+          Truth value = inScope == Truth.FALSE ? Truth.FALSE : inScope.and(select.at(facts, p));
+          if (value == Truth.UNKNOWN) knownMask.clear(index);
+          if (value == Truth.TRUE) trueMask.set(index);
+        }
+    return new SectionResult(key, trueMask, knownMask);
   }
 }
