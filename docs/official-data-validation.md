@@ -14,6 +14,14 @@ From the repository root:
 
 Gradle itself uses the project's JDK 21 toolchain. The `officialJava` property selects a separate Java 25 executable only for Mojang's data generator. Set `JAVA_HOME` to JDK 21 when Gradle cannot discover it automatically.
 
+On macOS with Homebrew's versioned JDK formulas, both can be selected explicitly:
+
+```sh
+export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"
+./gradlew bakeOfficialMinecraft \
+  -PofficialJava="$(brew --prefix openjdk@25)/libexec/openjdk.jdk/Contents/Home/bin/java"
+```
+
 The bake step invokes Mojang's `net.minecraft.data.Main --reports` from each official server bundle. It reads the resulting block and registry reports plus vanilla tags and biome definitions in the bundle, resolves nested tags, and writes `catalog.json` for each version. The reports, JARs, catalogs, logs and receipts all live under `.tmp/minecraft-official/`, which Git ignores. Downloads and redirects are restricted to Mojang's official metadata and data hosts. The Kotlin tasks and Java catalog reader are reusable; the downloaded data is disposable.
 
 The official test suite verifies:
