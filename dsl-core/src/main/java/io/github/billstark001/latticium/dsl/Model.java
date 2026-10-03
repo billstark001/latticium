@@ -4,7 +4,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.StringJoiner;
+import java.util.TreeMap;
+import java.util.regex.Pattern;
 
+/** Minecraft-independent values and read-only facts shared by the DSL and planner. */
 public final class Model {
   private Model() {}
 
@@ -40,16 +44,24 @@ public final class Model {
   }
 
   public record ResourceId(String namespace, String path) implements Comparable<ResourceId> {
+    private static final Pattern NAMESPACE = Pattern.compile("[a-z0-9_.-]+");
+    private static final Pattern PATH = Pattern.compile("[a-z0-9_./-]+");
+
     public ResourceId {
-      if (!namespace.matches("[a-z0-9_.-]+") || !path.matches("[a-z0-9_./-]+"))
+      Objects.requireNonNull(namespace, "namespace");
+      Objects.requireNonNull(path, "path");
+      if (!NAMESPACE.matcher(namespace).matches() || !PATH.matcher(path).matches())
         throw new IllegalArgumentException("Invalid resource ID: " + namespace + ":" + path);
     }
 
+    /** Parses a full ID, or uses the {@code minecraft} namespace for a short ID. */
     public static ResourceId parse(String text) {
-      var parts = text.split(":", -1);
-      if (parts.length == 1) return new ResourceId("minecraft", parts[0]);
-      if (parts.length == 2) return new ResourceId(parts[0], parts[1]);
-      throw new IllegalArgumentException("Invalid resource ID: " + text);
+      Objects.requireNonNull(text, "text");
+      int separator = text.indexOf(':');
+      if (separator < 0) return new ResourceId("minecraft", text);
+      if (text.indexOf(':', separator + 1) >= 0)
+        throw new IllegalArgumentException("Invalid resource ID: " + text);
+      return new ResourceId(text.substring(0, separator), text.substring(separator + 1));
     }
 
     @Override
@@ -65,15 +77,28 @@ public final class Model {
 
   public record BlockState(ResourceId block, Map<String, String> properties) {
     public BlockState {
+      Objects.requireNonNull(block, "block");
       properties = Map.copyOf(properties);
     }
 
     public Optional<String> property(String key) {
       return Optional.ofNullable(properties.get(key));
     }
+
+    /** Stable registry ID and sorted properties for ordering or diagnostics. */
+    public String canonicalId() {
+      var joined = new StringJoiner(",", block + "[", "]");
+      new TreeMap<>(properties).forEach((key, value) -> joined.add(key + "=" + value));
+      return joined.toString();
+    }
   }
 
   public record Position(ResourceId dimension, int x, int y, int z) {
+    public Position {
+      Objects.requireNonNull(dimension, "dimension");
+    }
+
+    /** Returns a translated position, throwing if an integer coordinate overflows. */
     public Position offset(int dx, int dy, int dz) {
       return new Position(
           dimension, Math.addExact(x, dx), Math.addExact(y, dy), Math.addExact(z, dz));
@@ -106,21 +131,31 @@ public final class Model {
     record Unknown(String reason) implements TargetCell {}
   }
 
+  /** Null fields mean that the corresponding world fact was not captured. */
   public record WorldCell(
       BlockState state, ResourceId biome, ResourceId fluid, Integer light, Boolean solid) {}
 
+  /**
+   * All methods read one immutable capture; unavailable facts must remain unknown to evaluators.
+   */
   public interface Facts {
+    /** Empty means the cell is unavailable; individual null fields mean partial capture. */
     Optional<WorldCell> world(Position pos);
 
+    /** Returns {@link TargetCell.Unknown} when target data cannot be read. */
     TargetCell target(Position pos);
 
+    /** Empty means the player anchor is unavailable in this capture. */
     Optional<Position> player();
 
+    /** Empty means inventory data is unavailable, not an empty inventory. */
     Optional<Set<ResourceId>> inventory();
 
+    /** Returns {@link Truth#UNKNOWN} when selection membership is unavailable. */
     Truth selection(String name, Position pos);
   }
 
+  /** Version-bound registry domain used to validate and enumerate symbolic set members. */
   public interface Registry {
     enum Resolution {
       FOUND,
@@ -128,14 +163,19 @@ public final class Model {
       UNAVAILABLE
     }
 
+    /** Resolves an ID without treating an unavailable registry as a missing ID. */
     Resolution resolve(SetType kind, ResourceId id);
 
+    /** Resolves a tag name within one registry kind. */
     Resolution resolveTag(SetType kind, ResourceId id);
 
+    /** Returns the members of a resolved tag. Rebind expressions after a registry reload. */
     Set<ResourceId> tag(SetType kind, ResourceId id);
 
+    /** Returns the finite domain used for registry set complement and enumeration. */
     Set<ResourceId> universe(SetType kind);
 
+    /** Returns all legal states of a block in this registry version. */
     Set<BlockState> states(ResourceId block);
   }
 }

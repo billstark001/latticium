@@ -23,7 +23,8 @@ public final class Syntax {
     }
   }
 
-  public sealed interface Expr permits Binary, Negate, Literal, Name, Call, Range, Atom, Pair {
+  public sealed interface Expr
+      permits Binary, Negate, Literal, Name, Text, Call, Range, Atom, Pair {
     Span span();
   }
 
@@ -32,13 +33,27 @@ public final class Syntax {
   public record Negate(Expr inner, Span span) implements Expr {}
 
   public record Member(
-      boolean tag, Model.ResourceId id, Map<String, String> properties, Span span) {}
+      boolean tag, Model.ResourceId id, Map<String, String> properties, Span span) {
+    public Member {
+      properties = Map.copyOf(properties);
+    }
+  }
 
-  public record Literal(Model.SetType type, List<Member> members, Span span) implements Expr {}
+  public record Literal(Model.SetType type, List<Member> members, Span span) implements Expr {
+    public Literal {
+      members = List.copyOf(members);
+    }
+  }
 
   public record Name(String value, Span span) implements Expr {}
 
-  public record Call(String name, List<Expr> args, Span span) implements Expr {}
+  public record Text(String value, Span span) implements Expr {}
+
+  public record Call(String name, List<Expr> args, Span span) implements Expr {
+    public Call {
+      args = List.copyOf(args);
+    }
+  }
 
   public record Range(char axis, Model.IntRange range, Span span) implements Expr {}
 
@@ -51,13 +66,27 @@ public final class Syntax {
   public record Parameter(String name, Model.SetType type, boolean integer) {}
 
   public record Function(
-      String name, List<Parameter> parameters, Model.SetType result, Expr body, Span span) {}
+      String name, List<Parameter> parameters, Model.SetType result, Expr body, Span span) {
+    public Function {
+      parameters = List.copyOf(parameters);
+    }
+  }
 
   public record Terminal(
-      String kind, Expr expression, List<Order> order, Integer limit, boolean any, Span span) {}
+      String kind, Expr expression, List<Order> order, Integer limit, boolean any, Span span) {
+    public Terminal {
+      order = List.copyOf(order);
+    }
+  }
 
   public record Order(String key, boolean descending) {}
 
   public record Document(
-      List<Declaration> declarations, List<Function> functions, List<Terminal> terminals) {}
+      List<Declaration> declarations, List<Function> functions, List<Terminal> terminals) {
+    public Document {
+      declarations = List.copyOf(declarations);
+      functions = List.copyOf(functions);
+      terminals = List.copyOf(terminals);
+    }
+  }
 }

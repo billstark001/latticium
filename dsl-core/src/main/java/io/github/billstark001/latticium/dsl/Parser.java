@@ -5,9 +5,27 @@ import static io.github.billstark001.latticium.dsl.Syntax.*;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /** Small, bounded parser. Token positions refer to UTF-16 offsets in the supplied source. */
 public final class Parser {
+  private static final int MAX_SOURCE_LENGTH = 65_536;
+  private static final int MAX_STRING_LENGTH = 8_192;
+  private static final int MAX_TOKENS = 4_096;
+  private static final int MAX_NESTING = 128;
+
+  private static final Pattern NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+  private static final Pattern INTEGER = Pattern.compile("-?[0-9]+");
+  private static final Pattern POSITIVE_INTEGER = Pattern.compile("[1-9][0-9]*");
+  private static final Pattern RESOURCE_PART = Pattern.compile("[a-z0-9_./-]+");
+  private static final Pattern PROPERTY_VALUE = Pattern.compile("[0-9A-Za-z_.+-]+");
+  private static final Pattern AXIS = Pattern.compile("[xyz]");
+  private static final Pattern SET_PREFIX = Pattern.compile("[bsimf]");
+
+  private static boolean matches(Pattern pattern, String value) {
+    return pattern.matcher(value).matches();
+  }
+
   private record Token(String value, int start, int end) {
     Span span() {
       return new Span(start, end);
@@ -21,11 +39,12 @@ public final class Parser {
 
   private Parser(String source) {
     this.source = source;
-    if (source.length() > 65536)
+    if (source.length() > MAX_SOURCE_LENGTH)
       throw new Failure("Source too large", new Span(0, source.length()));
     lex();
   }
 
+  /** Parses exactly one expression; rejects trailing tokens and reports UTF-16 source spans. */
   public static Expr expression(String source) {
     var p = new Parser(source);
     var e = p.expr();
@@ -33,6 +52,7 @@ public final class Parser {
     return e;
   }
 
+  /** Parses declarations, functions and terminals without binding names or registry IDs. */
   public static Document document(String source) {
     return new Parser(source).document();
   }
@@ -55,7 +75,8 @@ public final class Parser {
           if (source.charAt(i) == '\\') i++;
           i++;
         }
-        if (i - start > 8192) throw new Failure("String too long", new Span(start, i));
+        if (i - start - 1 > MAX_STRING_LENGTH)
+          throw new Failure("String too long", new Span(start, i));
         if (i >= source.length()) throw new Failure("Unclosed string", new Span(start, i));
         i++;
       } else if (c == '.' && i + 1 < source.length() && source.charAt(i + 1) == '.') i += 2;
@@ -82,7 +103,8 @@ public final class Parser {
       tokens.add(new Token(source.substring(start, i), start, i));
     }
     tokens.add(new Token("<eof>", source.length(), source.length()));
-    if (tokens.size() > 4096) throw new Failure("Source too large", new Span(0, source.length()));
+    if (tokens.size() > MAX_TOKENS)
+      throw new Failure("Source too large", new Span(0, source.length()));
   }
 
   private Token now() {
@@ -119,12 +141,13 @@ public final class Parser {
   }
 
   private Token word() {
-    if (!now().value.matches("[A-Za-z_][A-Za-z0-9_]*")) throw error("Expected name");
+    if (!matches(NAME, now().value)) throw error("Expected name");
     return tokens.get(cursor++);
   }
 
   private int integer() {
     var t = now();
+    if (!matches(INTEGER, t.value)) throw error("Expected integer");
     try {
       int v = Integer.parseInt(t.value);
       cursor++;
@@ -140,7 +163,7 @@ public final class Parser {
       cursor++;
       return unescape(t);
     }
-    if (!t.value.matches("[0-9A-Za-z_.+-]+")) throw error("Expected property value");
+    if (!matches(PROPERTY_VALUE, t.value)) throw error("Expected property value");
     cursor++;
     return t.value;
   }
@@ -163,12 +186,12 @@ public final class Parser {
   private Model.ResourceId id(boolean shortAllowed) {
     int start = now().start;
     String first = now().value;
-    if (!first.matches("[a-z0-9_./-]+")) throw error("Expected resource ID");
+    if (!matches(RESOURCE_PART, first)) throw error("Expected resource ID");
     cursor++;
     String raw = first;
     if (take(":")) {
       String second = now().value;
-      if (!second.matches("[a-z0-9_./-]+")) throw error("Expected resource path");
+      if (!matches(RESOURCE_PART, second)) throw error("Expected resource path");
       cursor++;
       raw += ":" + second;
     } else if (!shortAllowed)
@@ -200,7 +223,7 @@ public final class Parser {
     Integer min = null, max = null;
     if (!is("..")) min = integer();
     if (take("..")) {
-      if (now().value.matches("-?[0-9]+")) max = integer();
+      if (matches(INTEGER, now().value)) max = integer();
     } else max = min;
     try {
       return new Model.IntRange(min, max);
@@ -210,7 +233,7 @@ public final class Parser {
   }
 
   private Expr expr() {
-    if (++nesting > 128) throw error("Nesting limit exceeded");
+    if (++nesting > MAX_NESTING) throw error("Nesting limit exceeded");
     try {
       return union();
     } finally {
@@ -239,7 +262,7 @@ public final class Parser {
   private Expr unary() {
     if (take("!")) {
       int start = tokens.get(cursor - 1).start;
-      if (++nesting > 128) throw error("Nesting limit exceeded");
+      if (++nesting > MAX_NESTING) throw error("Nesting limit exceeded");
       try {
         Expr e = unary();
         return new Negate(e, new Span(start, e.span().end()));
@@ -252,14 +275,14 @@ public final class Parser {
 
   private Expr primary() {
     int start = now().start;
-    if (now().value.matches("[A-Za-z_][A-Za-z0-9_]*")
-        && next().value.equals("=")
-        && !now().value.matches("[xyz]")) {
+    if (matches(NAME, now().value) && next().value.equals("=") && !matches(AXIS, now().value)) {
       String key = word().value;
       expect("=");
       String val = value();
       return new Pair(key, val, new Span(start, tokens.get(cursor - 1).end));
     }
+    if (matches(RESOURCE_PART, now().value) && next().value.equals(":"))
+      return new Atom(member(false), false, new Span(start, tokens.get(cursor - 1).end));
     if (is("..")) {
       var r = range();
       return new Range('\0', r, new Span(start, tokens.get(cursor - 1).end));
@@ -275,7 +298,7 @@ public final class Parser {
       cursor--;
       return new Atom(member(false), false, new Span(start, tokens.get(cursor - 1).end));
     }
-    if (is("{") || (now().value.matches("[bsimf]") && next().value.equals("{"))) {
+    if (is("{") || (matches(SET_PREFIX, now().value) && next().value.equals("{"))) {
       Model.SetType type = null;
       if (!is("{"))
         type =
@@ -296,13 +319,13 @@ public final class Parser {
       expect("}");
       return new Literal(type, List.copyOf(members), new Span(start, tokens.get(cursor - 1).end));
     }
-    if (now().value.matches("[xyz]") && next().value.equals("=")) {
+    if (matches(AXIS, now().value) && next().value.equals("=")) {
       char axis = now().value.charAt(0);
       cursor += 2;
       var r = range();
       return new Range(axis, r, new Span(start, tokens.get(cursor - 1).end));
     }
-    if (now().value.matches("-?[0-9]+")) {
+    if (matches(INTEGER, now().value)) {
       if (next().value.equals("..")) {
         var r = range();
         return new Range('\0', r, new Span(start, tokens.get(cursor - 1).end));
@@ -312,10 +335,10 @@ public final class Parser {
     }
     if (now().value.startsWith("\"")) {
       cursor++;
-      return new Name(
+      return new Text(
           unescape(tokens.get(cursor - 1)), new Span(start, tokens.get(cursor - 1).end));
     }
-    if (now().value.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+    if (matches(NAME, now().value)) {
       String name = now().value;
       cursor++;
       if (take("(")) {
@@ -333,10 +356,6 @@ public final class Parser {
         }
         expect(")");
         return new Call(name, List.copyOf(args), new Span(start, tokens.get(cursor - 1).end));
-      }
-      if (is(":")) {
-        cursor--;
-        return new Atom(member(false), false, new Span(start, tokens.get(cursor - 1).end));
       }
       return new Name(name, new Span(start, tokens.get(cursor - 1).end));
     }
@@ -361,7 +380,7 @@ public final class Parser {
     var terminals = new ArrayList<Terminal>();
     while (!is("<eof>")) {
       int start = now().start;
-      if (is("def") && next().value.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+      if (is("def") && matches(NAME, next().value)) {
         cursor++;
         String name = word().value;
         expect("(");
@@ -397,6 +416,8 @@ public final class Parser {
         String kind = word().value;
         if (!List.of("query", "count", "exists").contains(kind)) throw error("Expected terminal");
         var e = expr();
+        if (!kind.equals("query") && (is("order") || is("limit")))
+          throw error("Only query supports order and limit");
         var order = new ArrayList<Order>();
         Integer limit = null;
         boolean any = false;
@@ -419,6 +440,7 @@ public final class Parser {
         }
         if (take("limit")) {
           any = take("any");
+          if (!matches(POSITIVE_INTEGER, now().value)) throw error("Expected positive limit");
           limit = integer();
           if (limit <= 0 || order.isEmpty() && !any)
             throw error("Limit needs ordering or 'any' and must be positive");

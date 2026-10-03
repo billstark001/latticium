@@ -81,8 +81,19 @@ class CompilerTest {
     assertThrows(Syntax.Failure.class, () -> c.compile("b{stone} & i{stone}", null));
     assertThrows(Syntax.Failure.class, () -> c.compile("current({stone})", SetType.POS));
     assertEquals(SetType.ITEM, c.compile("{stone}", SetType.ITEM).type());
+    assertEquals(
+        Truth.FALSE, c.compile("s{minecraft:stone}", SetType.STATE).contains(FACTS, STONE));
+    assertEquals(SetType.BLOCK, c.compile("{} & b{stone}", null).type());
     assertEquals(Truth.TRUE, c.compile("minecraft:stone & y=..1", SetType.POS).at(FACTS, ORIGIN));
     assertEquals(SetType.POS, c.compile("state(x=1) | x=-64..32", SetType.POS).type());
+    assertEquals(
+        ResourceId.parse("a-b.c:stone"),
+        ((Syntax.Atom) Parser.expression("a-b.c:stone")).member().id());
+    assertEquals(
+        ResourceId.parse("1:stone"), ((Syntax.Atom) Parser.expression("1:stone")).member().id());
+    assertThrows(Syntax.Failure.class, () -> c.compile("\"missing\"", null));
+    assertThrows(Syntax.Failure.class, () -> c.compile("offset(\"1\",0,0,all())", SetType.POS));
+    assertEquals(Truth.FALSE, c.compile("selection(\"build\")", SetType.POS).at(FACTS, ORIGIN));
   }
 
   @Test
@@ -93,6 +104,70 @@ class CompilerTest {
     var bound = new Compiler(REGISTRY).compile(doc);
     assertEquals(1, bound.size());
     assertEquals(SetType.POS, bound.getFirst().type());
+    assertThrows(Syntax.Failure.class, () -> Parser.document("count all() limit any 1;"));
+    assertThrows(Syntax.Failure.class, () -> Parser.document("exists all() order by x;"));
+    assertThrows(Syntax.Failure.class, () -> Parser.document("query all() limit any 01;"));
+    assertThrows(Syntax.Failure.class, () -> Parser.expression("x=+1"));
+    var compiler = new Compiler(REGISTRY);
+    compiler.compile(Parser.document("rock: BlockSet = b{stone};"));
+    assertThrows(
+        Syntax.Failure.class,
+        () -> compiler.compile(Parser.document("def rock(): BlockSet = b{stone}; query all();")));
+    assertThrows(
+        Syntax.Failure.class,
+        () ->
+            new Compiler(REGISTRY)
+                .compile(
+                    Parser.document(
+                        "def first(): PosSet = second(); def second(): PosSet = first();")));
+  }
+
+  @Test
+  void failedDocumentDoesNotLeavePartialDefinitions() {
+    var compiler = new Compiler(REGISTRY);
+    assertThrows(
+        Syntax.Failure.class,
+        () -> compiler.compile(Parser.document("rocks: BlockSet = b{stone}; query missing;")));
+    assertThrows(Syntax.Failure.class, () -> compiler.compile("rocks", SetType.BLOCK));
+    assertEquals(
+        SetType.BLOCK,
+        compiler
+            .compile(Parser.document("rocks: BlockSet = b{stone}; query rocks;"))
+            .getFirst()
+            .type());
+    assertThrows(
+        Syntax.Failure.class,
+        () ->
+            compiler.compile(
+                Parser.document("def duplicate(x: PosSet, x: PosSet): PosSet = x; query all();")));
+  }
+
+  @Test
+  void combinedReadRadiusCannotOverflowBudget() {
+    var compiler = new Compiler(REGISTRY, Integer.MAX_VALUE);
+    compiler.registerPrimitive(
+        "wide",
+        new Compiler.Primitive() {
+          public java.util.List<SetType> parameters() {
+            return java.util.List.of(SetType.POS);
+          }
+
+          public SetType result() {
+            return SetType.POS;
+          }
+
+          public int radius() {
+            return Integer.MAX_VALUE;
+          }
+
+          public Compiler.Membership bind(java.util.List<Compiler.Bound> arguments) {
+            return (facts, position, element) -> Truth.TRUE;
+          }
+        });
+    assertThrows(
+        Syntax.Failure.class, () -> compiler.compile("wide(adjacent(all()))", SetType.POS));
+    assertThrows(
+        Syntax.Failure.class, () -> compiler.compile("adjacent(wide(all()))", SetType.POS));
   }
 
   @Test
@@ -151,5 +226,41 @@ class CompilerTest {
     assertEquals(1, b.radius());
     assertEquals(Truth.TRUE, b.at(FACTS, ORIGIN.offset(-1, 0, 0)));
     assertThrows(IllegalArgumentException.class, () -> c.registerPrimitive("current", primitive));
+  }
+
+  @Test
+  void offsetRejectsOverflowingRadiusAndKeepsCoordinateOverflowUnknown() {
+    var compiler = new Compiler(REGISTRY);
+    assertThrows(
+        Syntax.Failure.class, () -> compiler.compile("offset(-2147483648,0,0,all())", SetType.POS));
+    var atEdge = new Position(OVERWORLD, Integer.MAX_VALUE, 0, 0);
+    assertEquals(
+        Truth.UNKNOWN, compiler.compile("offset(1,0,0,all())", SetType.POS).at(FACTS, atEdge));
+  }
+
+  @Test
+  void blocksOfPreservesUnknownStateMembership() {
+    var uncertain =
+        new Compiler.Primitive() {
+          public java.util.List<SetType> parameters() {
+            return java.util.List.of();
+          }
+
+          public SetType result() {
+            return SetType.STATE;
+          }
+
+          public int radius() {
+            return 0;
+          }
+
+          public Compiler.Membership bind(java.util.List<Compiler.Bound> args) {
+            return (facts, pos, element) -> Truth.UNKNOWN;
+          }
+        };
+    var compiler = new Compiler(REGISTRY).registerPrimitive("uncertain", uncertain);
+    assertEquals(
+        Truth.UNKNOWN,
+        compiler.compile("blocks_of(uncertain())", SetType.BLOCK).contains(FACTS, STONE));
   }
 }
