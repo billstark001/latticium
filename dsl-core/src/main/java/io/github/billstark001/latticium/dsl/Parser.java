@@ -2,16 +2,15 @@ package io.github.billstark001.latticium.dsl;
 
 import static io.github.billstark001.latticium.dsl.Syntax.*;
 
+import io.github.billstark001.latticium.dsl.Lexer.Token;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /** Small, bounded parser. Token positions refer to UTF-16 offsets in the supplied source. */
 public final class Parser {
-  private static final int MAX_SOURCE_LENGTH = 65_536;
-  private static final int MAX_STRING_LENGTH = 8_192;
-  private static final int MAX_TOKENS = 4_096;
   private static final int MAX_NESTING = 128;
 
   private static final Pattern NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
@@ -21,27 +20,19 @@ public final class Parser {
   private static final Pattern PROPERTY_VALUE = Pattern.compile("[0-9A-Za-z_.+-]+");
   private static final Pattern AXIS = Pattern.compile("[xyz]");
   private static final Pattern SET_PREFIX = Pattern.compile("[bsimf]");
+  private static final Set<String> TERMINAL_KINDS = Set.of("query", "count", "exists");
+  private static final Set<String> ORDER_KEYS = Set.of("x", "y", "z", "id", "distance2(player)");
 
   private static boolean matches(Pattern pattern, String value) {
     return pattern.matcher(value).matches();
   }
 
-  private record Token(String value, int start, int end) {
-    Span span() {
-      return new Span(start, end);
-    }
-  }
-
-  private final List<Token> tokens = new ArrayList<>();
+  private final List<Token> tokens;
   private int cursor;
   private int nesting;
-  private final String source;
 
   private Parser(String source) {
-    this.source = source;
-    if (source.length() > MAX_SOURCE_LENGTH)
-      throw new Failure("Source too large", new Span(0, source.length()));
-    lex();
+    tokens = Lexer.lex(source);
   }
 
   /** Parses exactly one expression; rejects trailing tokens and reports UTF-16 source spans. */
@@ -55,56 +46,6 @@ public final class Parser {
   /** Parses declarations, functions and terminals without binding names or registry IDs. */
   public static Document document(String source) {
     return new Parser(source).document();
-  }
-
-  private void lex() {
-    for (int i = 0; i < source.length(); ) {
-      char c = source.charAt(i);
-      if (Character.isWhitespace(c)) {
-        i++;
-        continue;
-      }
-      if (c == '/' && i + 1 < source.length() && source.charAt(i + 1) == '/') {
-        while (i < source.length() && source.charAt(i) != '\n') i++;
-        continue;
-      }
-      int start = i;
-      if (c == '"') {
-        i++;
-        while (i < source.length() && source.charAt(i) != '"') {
-          if (source.charAt(i) == '\\') i++;
-          i++;
-        }
-        if (i - start - 1 > MAX_STRING_LENGTH)
-          throw new Failure("String too long", new Span(start, i));
-        if (i >= source.length()) throw new Failure("Unclosed string", new Span(start, i));
-        i++;
-      } else if (c == '.' && i + 1 < source.length() && source.charAt(i + 1) == '.') i += 2;
-      else if ("{}[](),:;=!&|#$".indexOf(c) >= 0) i++;
-      else if (Character.isLetterOrDigit(c)
-          || c == '_'
-          || c == '-'
-          || c == '/'
-          || c == '.'
-          || c == '+') {
-        i++;
-        while (i < source.length()) {
-          char n = source.charAt(i);
-          if (n == '.' && i + 1 < source.length() && source.charAt(i + 1) == '.') break;
-          if (!(Character.isLetterOrDigit(n)
-              || n == '_'
-              || n == '-'
-              || n == '/'
-              || n == '.'
-              || n == '+')) break;
-          i++;
-        }
-      } else throw new Failure("Unexpected character", new Span(i, i + 1));
-      tokens.add(new Token(source.substring(start, i), start, i));
-    }
-    tokens.add(new Token("<eof>", source.length(), source.length()));
-    if (tokens.size() > MAX_TOKENS)
-      throw new Failure("Source too large", new Span(0, source.length()));
   }
 
   private Token now() {
@@ -161,37 +102,25 @@ public final class Parser {
     var t = now();
     if (t.value.startsWith("\"")) {
       cursor++;
-      return unescape(t);
+      return Lexer.unescape(t);
     }
     if (!matches(PROPERTY_VALUE, t.value)) throw error("Expected property value");
     cursor++;
     return t.value;
   }
 
-  private String unescape(Token t) {
-    var s = t.value;
-    var b = new StringBuilder();
-    for (int i = 1; i < s.length() - 1; i++) {
-      char c = s.charAt(i);
-      if (c == '\\') {
-        if (++i >= s.length() - 1 || s.charAt(i) != '\\' && s.charAt(i) != '"')
-          throw new Failure("Invalid escape", t.span());
-        c = s.charAt(i);
-      }
-      b.append(c);
-    }
-    return b.toString();
-  }
-
   private Model.ResourceId id(boolean shortAllowed) {
     int start = now().start;
     String first = now().value;
     if (!matches(RESOURCE_PART, first)) throw error("Expected resource ID");
-    cursor++;
+    Token firstToken = tokens.get(cursor++);
     String raw = first;
     if (take(":")) {
+      Token separator = tokens.get(cursor - 1);
       String second = now().value;
       if (!matches(RESOURCE_PART, second)) throw error("Expected resource path");
+      if (firstToken.end != separator.start || separator.end != now().start)
+        throw new Failure("Resource ID must be contiguous", new Span(start, now().end));
       cursor++;
       raw += ":" + second;
     } else if (!shortAllowed)
@@ -206,6 +135,8 @@ public final class Parser {
   private Member member(boolean shortAllowed) {
     int start = now().start;
     boolean tag = take("#");
+    if (tag && tokens.get(cursor - 1).end != now().start)
+      throw new Failure("Tag ID must be contiguous", new Span(start, now().end));
     var id = id(shortAllowed);
     var props = new LinkedHashMap<String, String>();
     if (take("[")) {
@@ -292,8 +223,11 @@ public final class Parser {
       expect(")");
       return e;
     }
-    if (take("$"))
+    if (take("$")) {
+      if (tokens.get(cursor - 1).end != now().start)
+        throw new Failure("Biome ID must be contiguous", new Span(start, now().end));
       return new Atom(member(false), true, new Span(start, tokens.get(cursor - 1).end));
+    }
     if (take("#")) {
       cursor--;
       return new Atom(member(false), false, new Span(start, tokens.get(cursor - 1).end));
@@ -336,7 +270,7 @@ public final class Parser {
     if (now().value.startsWith("\"")) {
       cursor++;
       return new Text(
-          unescape(tokens.get(cursor - 1)), new Span(start, tokens.get(cursor - 1).end));
+          Lexer.unescape(tokens.get(cursor - 1)), new Span(start, tokens.get(cursor - 1).end));
     }
     if (matches(NAME, now().value)) {
       String name = now().value;
@@ -414,7 +348,7 @@ public final class Parser {
         declarations.add(new Declaration(name, t, e, new Span(start, tokens.get(cursor - 1).end)));
       } else {
         String kind = word().value;
-        if (!List.of("query", "count", "exists").contains(kind)) throw error("Expected terminal");
+        if (!TERMINAL_KINDS.contains(kind)) throw error("Expected terminal");
         var e = expr();
         if (!kind.equals("query") && (is("order") || is("limit")))
           throw error("Only query supports order and limit");
@@ -431,8 +365,7 @@ public final class Parser {
               expect(")");
               key = "distance2(player)";
             }
-            if (!List.of("x", "y", "z", "id", "distance2(player)").contains(key))
-              throw error("Invalid order key");
+            if (!ORDER_KEYS.contains(key)) throw error("Invalid order key");
             boolean desc = take("desc");
             if (!desc) take("asc");
             order.add(new Order(key, desc));
@@ -442,8 +375,8 @@ public final class Parser {
           any = take("any");
           if (!matches(POSITIVE_INTEGER, now().value)) throw error("Expected positive limit");
           limit = integer();
-          if (limit <= 0 || order.isEmpty() && !any)
-            throw error("Limit needs ordering or 'any' and must be positive");
+          if (limit <= 0 || order.isEmpty() && !any || !order.isEmpty() && any)
+            throw error("Limit needs either ordering or 'any', and must be positive");
         }
         expect(";");
         terminals.add(
