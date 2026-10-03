@@ -17,5 +17,9 @@ tasks.register<Test>("officialTest") {
         "latticium.officialRoot",
         rootProject.file(".tmp/minecraft-official").absolutePath,
     )
+    inputs.files(
+        rootProject.file(".tmp/minecraft-official/26.2/catalog.json"),
+        rootProject.file(".tmp/minecraft-official/26.3/catalog.json"),
+    )
     shouldRunAfter(tasks.test)
 }

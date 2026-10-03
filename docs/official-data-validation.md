@@ -5,12 +5,16 @@ The offline core can be tested against Mojang's [version manifest](https://pisto
 From the repository root:
 
 ```sh
-python3 scripts/fetch_official_minecraft.py
-python3 scripts/bake_official_minecraft.py --java /path/to/jdk25/bin/java
-JAVA_HOME=/path/to/jdk21 ./gradlew test :planning-core:officialTest
+./gradlew fetchOfficialMinecraft
+./gradlew bakeOfficialMinecraft -PofficialJava=/path/to/jdk25/bin/java
+./gradlew check :planning-core:officialTest
 ```
 
-The bake step invokes Mojang's `net.minecraft.data.Main --reports` from each official server bundle. It reads the resulting block and registry reports plus vanilla tags and biome definitions in the bundle, resolves nested tags, and writes `catalog.json` for each version. The reports, JARs, catalogs, logs and receipts all live under `.tmp/minecraft-official/`, which Git ignores. The scripts and Java catalog reader are reusable; the downloaded data is disposable.
+`fetchOfficialMinecraft` and `bakeOfficialMinecraft` are implemented in [`scripts/official-data.gradle.kts`](../scripts/official-data.gradle.kts). They default to both versions. Use `-PofficialVersions=26.2` to select one, `-PofficialClientOnly=true` for a client-only fetch, or `-PrefreshOfficialManifest=true` to refresh the cached version manifest. `bakeOfficialMinecraft` requires the server JAR and Java 25. `testOfficialDataHelpers` checks URL and tag resolution edge cases without downloading data.
+
+Gradle itself uses the project's JDK 21 toolchain. The `officialJava` property selects a separate Java 25 executable only for Mojang's data generator. Set `JAVA_HOME` to JDK 21 when Gradle cannot discover it automatically.
+
+The bake step invokes Mojang's `net.minecraft.data.Main --reports` from each official server bundle. It reads the resulting block and registry reports plus vanilla tags and biome definitions in the bundle, resolves nested tags, and writes `catalog.json` for each version. The reports, JARs, catalogs, logs and receipts all live under `.tmp/minecraft-official/`, which Git ignores. Downloads and redirects are restricted to Mojang's official metadata and data hosts. The Kotlin tasks and Java catalog reader are reusable; the downloaded data is disposable.
 
 The official test suite verifies:
 

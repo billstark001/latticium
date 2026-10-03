@@ -3,6 +3,8 @@ plugins {
     id("com.diffplug.spotless") version "8.10.3"
 }
 
+apply(from = "scripts/official-data.gradle.kts")
+
 repositories { mavenCentral() }
 
 spotless {
@@ -57,7 +59,7 @@ tasks.register("lint") {
 }
 
 tasks.named("check") {
-    dependsOn("lint", subprojects.map { "${it.path}:test" })
+    dependsOn("lint", "testOfficialDataHelpers", subprojects.map { "${it.path}:test" })
 }
 
 subprojects {

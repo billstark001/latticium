@@ -14,9 +14,7 @@ import org.junit.jupiter.api.Test;
 class OfficialDataTest {
   private static ReportRegistry load(String version) throws Exception {
     String root = System.getProperty("latticium.officialRoot");
-    assertNotNull(
-        root,
-        "Run scripts/fetch_official_minecraft.py and scripts/bake_official_minecraft.py first");
+    assertNotNull(root, "Run fetchOfficialMinecraft and bakeOfficialMinecraft Gradle tasks first");
     return ReportRegistry.load(Path.of(root, version, "catalog.json"));
   }
 
