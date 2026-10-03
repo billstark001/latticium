@@ -3,6 +3,7 @@ package io.github.billstark001.latticium.planning;
 import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
 import io.github.billstark001.latticium.dsl.Syntax;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -14,26 +15,33 @@ import java.util.Set;
 public final class QueryRunner {
   private static final Set<String> TERMINAL_KINDS = Set.of("query", "count", "exists");
 
-  private record Match(Object value, long sequence, String idKey) {}
+  // Three squared components at this bound still fit in a signed long.
+  private static final long MAX_SAFE_DISTANCE_COMPONENT = 1_700_000_000L;
+
+  private record Match(
+      Object value, long sequence, String idKey, long distanceLong, BigInteger distanceBig) {}
 
   private static final class MatchCollector {
     private final boolean query;
     private final Integer limit;
     private final boolean needsIdKey;
+    private final Position player;
     private final Comparator<Match> order;
-    private final List<Match> matches = new ArrayList<>();
+    private final List<Object> unorderedMatches = new ArrayList<>();
+    private final List<Match> orderedMatches = new ArrayList<>();
     private final PriorityQueue<Match> best;
     private long count;
     private long unknown;
 
-    MatchCollector(Syntax.Terminal terminal, Facts facts) {
+    MatchCollector(Syntax.Terminal terminal, Position player) {
       query = terminal.kind().equals("query");
       limit = terminal.limit();
       needsIdKey = terminal.order().stream().anyMatch(item -> item.key().equals("id"));
+      this.player = player;
       Comparator<Match> comparator = null;
       if (query) {
         for (var item : terminal.order()) {
-          var next = orderComparator(item, facts);
+          var next = orderComparator(item);
           comparator = comparator == null ? next : comparator.thenComparing(next);
         }
       }
@@ -49,23 +57,29 @@ public final class QueryRunner {
       if (truth != Truth.TRUE) return;
       long sequence = count++;
       if (!query) return;
-      var match = new Match(value, sequence, needsIdKey ? idKey(value) : null);
+      if (order == null) {
+        if (limit == null || unorderedMatches.size() < limit) unorderedMatches.add(value);
+        return;
+      }
+      var match = match(value, sequence, needsIdKey, player);
       if (best != null) {
         if (best.size() < limit) best.add(match);
         else if (order.compare(match, best.peek()) < 0) {
           best.remove();
           best.add(match);
         }
-      } else if (limit == null || matches.size() < limit) {
-        matches.add(match);
+      } else {
+        orderedMatches.add(match);
       }
     }
 
     Output output() {
       if (!query) return new Output(List.of(), unknown, exists(), count);
-      if (best != null) matches.addAll(best);
-      if (order != null) matches.sort(order);
-      return new Output(matches.stream().map(Match::value).toList(), unknown, exists(), count);
+      if (order == null) return new Output(unorderedMatches, unknown, exists(), count);
+      if (best != null) orderedMatches.addAll(best);
+      orderedMatches.sort(order);
+      return new Output(
+          orderedMatches.stream().map(Match::value).toList(), unknown, exists(), count);
     }
 
     private Truth exists() {
@@ -80,7 +94,10 @@ public final class QueryRunner {
     }
   }
 
-  /** Enumerates a finite domain, counting unknowns separately and enforcing the cell budget. */
+  /**
+   * Enumerates a finite domain, counting unknowns separately. The cell budget counts visited
+   * positions even when bounds overlap, so duplicate ranges cannot bypass the work limit.
+   */
   public Output run(
       Syntax.Terminal terminal,
       Compiler.Bound expression,
@@ -89,21 +106,21 @@ public final class QueryRunner {
       Facts facts,
       int maxCells) {
     if (maxCells <= 0) throw new IllegalArgumentException("Positive query budget required");
-    validate(terminal, expression.type(), bounds, facts);
-    var collector = new MatchCollector(terminal, facts);
-    int examined = 0;
+    Position player = validate(terminal, expression.type(), bounds, facts);
+    var collector = new MatchCollector(terminal, player);
+    long examined = 0;
     if (expression.type() == SetType.POS) {
       if (bounds.isEmpty())
         throw new IllegalArgumentException("PosSet query requires finite bounds");
-      var seen = new HashSet<Position>();
+      Set<Position> seen = bounds.size() == 1 ? null : new HashSet<>();
       for (var b : bounds)
         for (long y = b.minY(); y <= b.maxY(); y++)
           for (long z = b.minZ(); z <= b.maxZ(); z++)
             for (long x = b.minX(); x <= b.maxX(); x++) {
               var p = new Position(b.dimension(), (int) x, (int) y, (int) z);
-              if (!seen.add(p)) continue;
               if (++examined > maxCells)
                 throw new IllegalArgumentException("Query cell budget exceeded");
+              if (seen != null && !seen.add(p)) continue;
               collector.accept(expression.at(facts, p), p);
             }
     } else {
@@ -124,13 +141,16 @@ public final class QueryRunner {
     return collector.output();
   }
 
-  private static void validate(
+  private static Position validate(
       Syntax.Terminal terminal, SetType type, List<SectionScanner.Bounds> bounds, Facts facts) {
     if (!TERMINAL_KINDS.contains(terminal.kind())
         || terminal.limit() != null && terminal.limit() <= 0
+        || terminal.any() && terminal.limit() == null
         || !terminal.kind().equals("query")
-            && (!terminal.order().isEmpty() || terminal.limit() != null)
-        || terminal.limit() != null && terminal.order().isEmpty() && !terminal.any())
+            && (!terminal.order().isEmpty() || terminal.limit() != null || terminal.any())
+        || terminal.limit() != null
+            && (terminal.order().isEmpty() && !terminal.any()
+                || !terminal.order().isEmpty() && terminal.any()))
       throw new IllegalArgumentException("Invalid query terminal");
     if (terminal.order().stream()
         .anyMatch(
@@ -143,36 +163,53 @@ public final class QueryRunner {
               .orElseThrow(() -> new IllegalArgumentException("Player position unavailable"));
       if (bounds.stream().anyMatch(bound -> !bound.dimension().equals(player.dimension())))
         throw new IllegalArgumentException("Cannot order positions across dimensions by distance");
+      return player;
     }
+    return null;
   }
 
   private static String idKey(Object value) {
     return value instanceof BlockState state ? state.canonicalId() : value.toString();
   }
 
-  private static Comparator<Match> orderComparator(Syntax.Order order, Facts facts) {
+  private static Comparator<Match> orderComparator(Syntax.Order order) {
     Comparator<Match> comparator =
         switch (order.key()) {
           case "x" -> Comparator.comparingInt(match -> ((Position) match.value()).x());
           case "y" -> Comparator.comparingInt(match -> ((Position) match.value()).y());
           case "z" -> Comparator.comparingInt(match -> ((Position) match.value()).z());
           case "id" -> Comparator.comparing(Match::idKey);
-          case "distance2(player)" -> {
-            var player =
-                facts
-                    .player()
-                    .orElseThrow(() -> new IllegalArgumentException("Player position unavailable"));
-            yield Comparator.comparingDouble(
-                match -> {
-                  var p = (Position) match.value();
-                  double x = (double) p.x() - player.x(),
-                      y = (double) p.y() - player.y(),
-                      z = (double) p.z() - player.z();
-                  return x * x + y * y + z * z;
-                });
-          }
+          case "distance2(player)" -> QueryRunner::compareDistance;
           default -> throw new IllegalArgumentException("Invalid order key");
         };
     return order.descending() ? comparator.reversed() : comparator;
+  }
+
+  private static Match match(Object value, long sequence, boolean needsIdKey, Position player) {
+    String idKey = needsIdKey ? idKey(value) : null;
+    if (player == null) return new Match(value, sequence, idKey, 0, null);
+    var p = (Position) value;
+    long x = (long) p.x() - player.x(),
+        y = (long) p.y() - player.y(),
+        z = (long) p.z() - player.z();
+    if (Math.abs(x) <= MAX_SAFE_DISTANCE_COMPONENT
+        && Math.abs(y) <= MAX_SAFE_DISTANCE_COMPONENT
+        && Math.abs(z) <= MAX_SAFE_DISTANCE_COMPONENT)
+      return new Match(value, sequence, idKey, x * x + y * y + z * z, null);
+    BigInteger bx = BigInteger.valueOf(x), by = BigInteger.valueOf(y), bz = BigInteger.valueOf(z);
+    return new Match(
+        value, sequence, idKey, 0, bx.multiply(bx).add(by.multiply(by)).add(bz.multiply(bz)));
+  }
+
+  private static int compareDistance(Match left, Match right) {
+    if (left.distanceBig() == null && right.distanceBig() == null)
+      return Long.compare(left.distanceLong(), right.distanceLong());
+    BigInteger l =
+        left.distanceBig() == null ? BigInteger.valueOf(left.distanceLong()) : left.distanceBig();
+    BigInteger r =
+        right.distanceBig() == null
+            ? BigInteger.valueOf(right.distanceLong())
+            : right.distanceBig();
+    return l.compareTo(r);
   }
 }
