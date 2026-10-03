@@ -82,7 +82,7 @@ public final class RuleBook {
     private static Compiler.Bound guard(ObjectNode n,String key,Compiler compiler,String path){if(!n.has(key))return null;try{return compiler.compile(string(n,key,path),SetType.POS);}catch(io.github.billstark001.latticium.dsl.Syntax.Failure ex){throw new IllegalArgumentException(path+"/"+key+": "+ex.getMessage());}}
     private static BlockState state(JsonNode n,String path) {
         var o=object(n,path);keys(o,path,"block","properties");var id=ResourceId.parse(string(o,"block",path));var properties=new java.util.HashMap<String,String>();
-        if(o.has("properties")){var p=object(o.get("properties"),path+"/properties");p.fields().forEachRemaining(e->{if(!e.getValue().isTextual())throw new IllegalArgumentException(path+"/properties/"+e.getKey()+": expected string");properties.put(e.getKey(),e.getValue().asText());});}
+        if(o.has("properties")){var p=object(o.get("properties"),path+"/properties");p.properties().forEach(e->{if(!e.getValue().isTextual())throw new IllegalArgumentException(path+"/properties/"+e.getKey()+": expected string");properties.put(e.getKey(),e.getValue().asText());});}
         return new BlockState(id,properties);
     }
     private static ObjectNode object(JsonNode n,String path){if(!(n instanceof ObjectNode o))throw new IllegalArgumentException(path+": expected object");return o;}

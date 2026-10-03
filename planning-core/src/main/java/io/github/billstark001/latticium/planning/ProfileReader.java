@@ -57,6 +57,15 @@ public final class ProfileReader {
         } catch(IOException ex) { throw new Error("",ex.getMessage()); }
     }
     public Profile.Bound bind(Profile p,Compiler compiler) {
+        if(!p.uses().isEmpty())throw new Error("/use","Module resolver required");
+        return bindLoaded(p,compiler);
+    }
+    public Profile.Bound bind(Profile p,Compiler compiler,ModuleLoader.Resolver modules) {
+        try{new ModuleLoader(modules,compiler).loadAll(p.uses());}
+        catch(IllegalArgumentException|io.github.billstark001.latticium.dsl.Syntax.Failure ex){throw new Error("/use",ex.getMessage());}
+        return bindLoaded(p,compiler);
+    }
+    private Profile.Bound bindLoaded(Profile p,Compiler compiler) {
         try {
             var activation=p.activation()==null?null:at("/activation/where",()->compiler.compile(p.activation().where(),SetType.POS));
             var scope=at("/scope",()->compiler.compile(p.scope(),SetType.POS));

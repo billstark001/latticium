@@ -21,13 +21,13 @@ The `versions` and `integrations` directories are integration boundaries, not bu
 
 ## Implemented offline contract
 
-- Set types: `PosSet`, `BlockSet`, `StateSet`, `ItemSet`, `BiomeSet`, `FluidSet`; type checked `!`, `&`, `|`, literals, declarations and nonrecursive `def` with set parameters. Trusted hosts can register typed, bounded read-only primitives.
+- Set types: `PosSet`, `BlockSet`, `StateSet`, `ItemSet`, `BiomeSet`, `FluidSet`; type checked `!`, `&`, `|`, literals, declarations and nonrecursive `def` with set and bounded integer parameters. Trusted hosts can register typed, bounded read-only primitives.
 - Position predicates: coordinates, boxes, player/point spheres, selection, neighbor/offset, current/target state, biome, fluid, light, solid, surface, target comparison and inventory.
 - Explicit `Truth.UNKNOWN` for missing facts, including under negation. Symbolic compilation allows a rule/profile to be checked before a world registry exists; real registry binding must happen before evaluation.
-- Strict schema-1 profile JSON with duplicate/unknown key rejection, typed expression fields, target alternatives and policy budgets. An automatic scan requires a finite root scope expression.
+- Strict schema-1 profile JSON with duplicate/unknown key rejection, typed expression fields, explicit declaration module imports, target alternatives and policy budgets. An automatic scan requires a finite root scope expression. Activation tracking implements `enter` and `while` without turning unknown facts into false transitions.
 - Bounded read-only query execution, 4096-bit section result masks, inventory-aware material choice, and a policy-filtered state transition search. `RuleBook` accepts exact before/after states and DSL guards; a version-specific oracle must supply real placement behavior.
 - Neutral capture, action and observation contracts plus a session-bound job controller that waits for observation before confirming a submitted step.
 
 ## Current boundary
 
-The offline implementation does not send actions, predict Minecraft placement, import `.litematic`, or promise compatibility with any game version. In particular, it does not yet include a live world driver, full registry schema validation, all grammar features such as integer `def` parameters, optimized sorting, or per-section snapshot capture. These are required before shipping a working client mod. A planner result is only a proposed sequence; a future game adapter must recheck preconditions and observe world changes after each action.
+The offline implementation does not send actions, predict Minecraft placement, import `.litematic`, or promise compatibility with any game version. In particular, it does not yet include a live world driver, full registry schema validation, every grammar feature, optimized sorting, or per-section snapshot capture. These are required before shipping a working client mod. A planner result is only a proposed sequence; a future game adapter must recheck preconditions and observe world changes after each action.

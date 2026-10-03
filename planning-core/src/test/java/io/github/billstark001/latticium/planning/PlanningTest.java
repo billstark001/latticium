@@ -38,6 +38,18 @@ class PlanningTest {
         assertEquals(SetType.POS,bound.select().type());
         assertEquals(SetType.ITEM,bound.items().type());
     }
+    @Test void explicitModuleImportProvidesDeclarationsAndRejectsCycle() {
+        var reader=new ProfileReader();
+        var profile=reader.read("""
+          {"schema":1,"id":"user:modular","use":["user:common"],"scope":"box(0,0,0,1,0,0)",
+           "select":{"where":"rocks"},"target":{"items":"{minecraft:stone}"}}
+          """);
+        assertThrows(ProfileReader.Error.class,()->reader.bind(profile,Compiler.symbolic()));
+        ModuleLoader.Resolver good=id->Optional.of(new ModuleLoader.Module("rocks: PosSet = current(b{minecraft:stone});",List.of()));
+        assertEquals(SetType.POS,reader.bind(profile,Compiler.symbolic(),good).select().type());
+        ModuleLoader.Resolver cycle=id->Optional.of(new ModuleLoader.Module("rocks: PosSet = all();",List.of(id)));
+        assertThrows(ProfileReader.Error.class,()->reader.bind(profile,Compiler.symbolic(),cycle));
+    }
     @Test void scannerKeepsUnknownSeparate() {
         var facts=new Facts() {
             public Optional<WorldCell> world(Position p){return p.x()==0?Optional.of(new WorldCell(stone,DIM,AIR,0,true)):Optional.empty();}
@@ -92,5 +104,26 @@ class PlanningTest {
         };
         var result=new QueryRunner().run(doc.terminals().getFirst(),bound,List.of(new SectionScanner.Bounds(DIM,0,0,0,1,0,0)),registry,facts,16);
         assertEquals(0,result.count());assertEquals(1,result.unknownCount());assertEquals(Truth.UNKNOWN,result.exists());
+    }
+    @Test void activationUnknownDoesNotCreateEnterEdge() {
+        var tracker=new ActivationTracker();var activation=new Profile.Activation("all()",Profile.Activation.Mode.ENTER,false);
+        var where=Compiler.symbolic().compile("all()",SetType.POS);
+        var known=new Facts(){
+            public Optional<WorldCell> world(Position p){return Optional.empty();}
+            public TargetCell target(Position p){return new TargetCell.DontCare();}
+            public Optional<Position> player(){return Optional.of(new Position(DIM,0,0,0));}
+            public Optional<Set<ResourceId>> inventory(){return Optional.empty();}
+            public Truth selection(String n,Position p){return Truth.FALSE;}
+        };
+        var missing=new Facts(){
+            public Optional<WorldCell> world(Position p){return Optional.empty();}
+            public TargetCell target(Position p){return new TargetCell.DontCare();}
+            public Optional<Position> player(){return Optional.empty();}
+            public Optional<Set<ResourceId>> inventory(){return Optional.empty();}
+            public Truth selection(String n,Position p){return Truth.FALSE;}
+        };
+        assertEquals(ActivationTracker.Decision.IDLE,tracker.sample(activation,where,known));
+        assertEquals(ActivationTracker.Decision.DEFER,tracker.sample(activation,where,missing));
+        assertEquals(ActivationTracker.Decision.IDLE,tracker.sample(activation,where,known));
     }
 }
