@@ -31,14 +31,17 @@ public final class Host {
   }
 
   public interface SectionSnapshotSource {
+    /** Captures immutable facts for one section and its requested neighbor halo. */
     Capture capture(SectionScanner.SectionKey key, int halo);
   }
 
   public interface SelectionSource {
+    /** Returns finite bounds for one named selection in the requested session. */
     List<SectionScanner.Bounds> finiteBounds(String selectionId, SessionId session);
   }
 
   public interface TargetSource {
+    /** Returns a target cell or an explicit unknown result for unavailable target data. */
     TargetCell target(Position pos, SessionId session);
   }
 
@@ -63,6 +66,7 @@ public final class Host {
   }
 
   public interface ActionGateway {
+    /** Rechecks every precondition before sending an action; acceptance is not confirmation. */
     Submission submit(Planner.Proposal step, Preconditions preconditions, Profile.Policy policy);
   }
 
@@ -74,6 +78,7 @@ public final class Host {
   }
 
   public interface ObservationSource {
+    /** Reports whether the accepted action has produced its expected world state. */
     Observation observe(Receipt receipt, BlockState expected);
   }
 }

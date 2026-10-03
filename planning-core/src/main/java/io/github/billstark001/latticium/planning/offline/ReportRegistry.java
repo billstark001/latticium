@@ -1,7 +1,10 @@
 package io.github.billstark001.latticium.planning.offline;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.github.billstark001.latticium.dsl.Model.BlockState;
 import io.github.billstark001.latticium.dsl.Model.Registry;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
@@ -23,9 +26,16 @@ public final class ReportRegistry implements Registry {
   private final Map<ResourceId, Map<String, Set<String>>> properties = new HashMap<>();
 
   private ReportRegistry(JsonNode root) {
-    if (root.path("schema").asInt() != 1)
+    object(root, "catalog");
+    if (!root.path("schema").isIntegralNumber()
+        || !root.path("schema").canConvertToInt()
+        || root.path("schema").intValue() != 1)
       throw new IllegalArgumentException("Unsupported catalog schema");
-    version = root.path("version").asText();
+    version = text(root.get("version"), "version");
+    if (version.isBlank()) throw new IllegalArgumentException("Empty catalog version");
+    var universeData = object(root.get("universes"), "universes");
+    var tagData = object(root.get("tags"), "tags");
+    var blockData = object(root.get("blocks"), "blocks");
     for (var type :
         Map.of(
                 SetType.BLOCK,
@@ -38,62 +48,95 @@ public final class ReportRegistry implements Registry {
                 "fluid")
             .entrySet()) {
       var ids = new HashSet<ResourceId>();
-      root.path("universes")
-          .path(type.getValue())
-          .forEach(value -> ids.add(ResourceId.parse(value.asText())));
+      var universe = array(universeData.get(type.getValue()), "universes/" + type.getValue());
+      universe.forEach(value -> ids.add(ResourceId.parse(text(value, "universe ID"))));
+      if (ids.size() != universe.size())
+        throw new IllegalArgumentException("Duplicate universe ID: " + type.getValue());
       universes.put(type.getKey(), Set.copyOf(ids));
       var group = new HashMap<ResourceId, Set<ResourceId>>();
-      root.path("tags")
-          .path(type.getValue())
+      object(tagData.get(type.getValue()), "tags/" + type.getValue())
           .properties()
           .forEach(
               entry -> {
                 var members = new HashSet<ResourceId>();
-                entry.getValue().forEach(value -> members.add(ResourceId.parse(value.asText())));
+                array(entry.getValue(), "tag " + entry.getKey())
+                    .forEach(value -> members.add(ResourceId.parse(text(value, "tag member"))));
+                if (!ids.containsAll(members))
+                  throw new IllegalArgumentException(
+                      "Tag references unknown ID: " + entry.getKey());
                 group.put(ResourceId.parse(entry.getKey()), Set.copyOf(members));
               });
       tags.put(type.getKey(), Map.copyOf(group));
     }
     universes.put(SetType.STATE, universes.get(SetType.BLOCK));
     tags.put(SetType.STATE, tags.get(SetType.BLOCK));
-    root.path("blocks")
+    blockData
         .properties()
         .forEach(
             entry -> {
               var block = ResourceId.parse(entry.getKey());
               var definition = entry.getValue();
               var schema = new HashMap<String, Set<String>>();
-              definition
-                  .path("properties")
+              object(definition.get("properties"), "block properties " + block)
                   .properties()
                   .forEach(
                       property -> {
                         var values = new HashSet<String>();
-                        property.getValue().forEach(value -> values.add(value.asText()));
+                        array(property.getValue(), "property " + property.getKey())
+                            .forEach(value -> values.add(text(value, "property value")));
                         schema.put(property.getKey(), Set.copyOf(values));
                       });
               properties.put(block, Map.copyOf(schema));
               var legal = new HashSet<BlockState>();
-              definition
-                  .path("states")
+              array(definition.get("states"), "states for " + block)
                   .forEach(
                       state -> {
                         var values = new HashMap<String, String>();
-                        state
+                        object(state, "state for " + block)
                             .properties()
                             .forEach(
                                 property ->
-                                    values.put(property.getKey(), property.getValue().asText()));
+                                    values.put(
+                                        property.getKey(),
+                                        text(property.getValue(), "state value")));
+                        if (!values.keySet().equals(schema.keySet())
+                            || values.entrySet().stream()
+                                .anyMatch(e -> !schema.get(e.getKey()).contains(e.getValue())))
+                          throw new IllegalArgumentException("Illegal state for " + block);
                         legal.add(new BlockState(block, values));
                       });
+              if (legal.isEmpty()) throw new IllegalArgumentException("No states for " + block);
               states.put(block, Set.copyOf(legal));
             });
     if (!states.keySet().equals(universes.get(SetType.BLOCK)))
       throw new IllegalArgumentException("Block catalog mismatch");
   }
 
+  private static JsonNode object(JsonNode node, String name) {
+    if (node == null || !node.isObject())
+      throw new IllegalArgumentException("Expected object: " + name);
+    return node;
+  }
+
+  private static JsonNode array(JsonNode node, String name) {
+    if (node == null || !node.isArray())
+      throw new IllegalArgumentException("Expected array: " + name);
+    return node;
+  }
+
+  private static String text(JsonNode node, String name) {
+    if (node == null || !node.isTextual())
+      throw new IllegalArgumentException("Expected string: " + name);
+    return node.asText();
+  }
+
   public static ReportRegistry load(Path path) throws IOException {
-    return new ReportRegistry(new ObjectMapper().readTree(path.toFile()));
+    var mapper =
+        JsonMapper.builder(
+                JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .build();
+    return new ReportRegistry(mapper.readTree(path.toFile()));
   }
 
   public String version() {

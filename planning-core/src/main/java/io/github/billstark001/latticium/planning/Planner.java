@@ -10,6 +10,8 @@ import java.util.Set;
 
 /** Bounded state graph search. An oracle supplies version-specific legal transitions. */
 public final class Planner {
+  private static final ResourceId AIR = ResourceId.parse("minecraft:air");
+
   public enum Action {
     PLACE,
     USE_ITEM,
@@ -48,6 +50,7 @@ public final class Planner {
   }
 
   public interface Oracle {
+    /** Predicts legal transitions from one state without performing an action. */
     Prediction predict(Position pos, BlockState current, TargetCell goal);
   }
 
@@ -71,7 +74,7 @@ public final class Planner {
 
   public sealed interface Result
       permits Result.Ready, Result.Complete, Result.NoPlan, Result.Deferred {
-    record Ready(List<Proposal> steps, Cost cost) implements Result {
+    record Ready(BlockState initial, List<Proposal> steps, Cost cost) implements Result {
       public Ready {
         steps = List.copyOf(steps);
       }
@@ -86,6 +89,7 @@ public final class Planner {
 
   private record Node(BlockState state, Cost cost, List<Proposal> path) {}
 
+  /** Searches legal single-cell transitions in lexicographic cost order within both budgets. */
   public Result plan(
       Position pos,
       BlockState current,
@@ -103,11 +107,18 @@ public final class Planner {
     best.put(current, new Cost(0, 0, 0));
     int visited = 0;
     String last = "No allowed transition";
-    while (!queue.isEmpty() && visited++ < maxNodes) {
+    String unknownReason = null;
+    while (!queue.isEmpty()) {
       Node node = queue.remove();
       if (!node.cost().equals(best.get(node.state()))) continue;
+      // A goal is optimal only when it leaves the cost-ordered queue.
+      if (matches(node.state(), goal)) return new Result.Ready(current, node.path(), node.cost());
+      if (visited++ >= maxNodes) return new Result.NoPlan("Search budget exhausted");
       var prediction = oracle.predict(pos, node.state(), goal);
-      if (prediction instanceof Prediction.Unknown x) return new Result.Deferred(x.reason());
+      if (prediction instanceof Prediction.Unknown x) {
+        if (unknownReason == null) unknownReason = x.reason();
+        continue;
+      }
       if (prediction instanceof Prediction.Unsupported x) {
         last = x.reason();
         continue;
@@ -121,23 +132,26 @@ public final class Planner {
           continue;
         if (!step.affected().isEmpty() && !step.affected().equals(Set.of(pos)))
           continue; // no undeclared collateral effects in single-cell planner
-        Cost cost = node.cost().plus(step.cost());
+        Cost cost;
+        try {
+          cost = node.cost().plus(step.cost());
+        } catch (ArithmeticException overflow) {
+          continue;
+        }
         if (cost.actions() > policy.maxActionsPerActivation()) continue;
         if (best.containsKey(step.result()) && best.get(step.result()).compareTo(cost) <= 0)
           continue;
         var path = new ArrayList<>(node.path());
         path.add(step);
-        if (matches(step.result(), goal)) return new Result.Ready(path, cost);
         best.put(step.result(), cost);
         queue.add(new Node(step.result(), cost, path));
       }
     }
-    return new Result.NoPlan(visited >= maxNodes ? "Search budget exhausted" : last);
+    return unknownReason == null ? new Result.NoPlan(last) : new Result.Deferred(unknownReason);
   }
 
   private static boolean matches(BlockState state, TargetCell goal) {
     if (goal instanceof TargetCell.Exact x) return x.state().equals(state);
-    return goal instanceof TargetCell.Clear
-        && state.block().equals(ResourceId.parse("minecraft:air"));
+    return goal instanceof TargetCell.Clear && state.block().equals(AIR);
   }
 }

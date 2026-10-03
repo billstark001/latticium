@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
+import io.github.billstark001.latticium.dsl.Syntax;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -74,5 +75,62 @@ class RuleBookTest {
         () ->
             RuleBook.parse(
                 "{\"schema\":1,\"rules\":[" + rule + "," + rule + "]}", Compiler.symbolic()));
+  }
+
+  @Test
+  void falseGuardDominatesUnknownRequirementAndBindingRestoresTargetPhase() {
+    var compiler = Compiler.symbolic();
+    var rules =
+        RuleBook.parse(
+            """
+            {"schema":1,"rules":[{"id":"latticium:guarded","before":{"block":"minecraft:stone"},
+             "after":{"block":"minecraft:air"},"action":"break","when":"none()",
+             "requires":"adjacent(current(b{minecraft:stone}))"}]}
+            """,
+            compiler);
+    assertThrows(Syntax.Failure.class, () -> compiler.compile("matches_target()", SetType.POS));
+    var pos = new Position(ResourceId.parse("minecraft:overworld"), 0, 0, 0);
+    var stone = new BlockState(ResourceId.parse("minecraft:stone"), Map.of());
+    Facts facts =
+        new Facts() {
+          public Optional<WorldCell> world(Position p) {
+            return Optional.empty();
+          }
+
+          public TargetCell target(Position p) {
+            return new TargetCell.Clear();
+          }
+
+          public Optional<Position> player() {
+            return Optional.empty();
+          }
+
+          public Optional<Set<ResourceId>> inventory() {
+            return Optional.empty();
+          }
+
+          public Truth selection(String name, Position p) {
+            return Truth.FALSE;
+          }
+        };
+    assertInstanceOf(
+        Planner.Prediction.NoLegalPlacement.class,
+        rules.oracle(facts).predict(pos, stone, new TargetCell.Clear()));
+  }
+
+  @Test
+  void ruleCostsAndSchemaRequireIntegralJsonNumbers() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> RuleBook.parse("{\"schema\":1.0,\"rules\":[]}", Compiler.symbolic()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            RuleBook.parse(
+                """
+                {"schema":1,"rules":[{"id":"latticium:cost","before":{"block":"minecraft:stone"},
+                 "after":{"block":"minecraft:air"},"action":"break","cost":{"risk":1.5}}]}
+                """,
+                Compiler.symbolic()));
   }
 }

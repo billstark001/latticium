@@ -10,12 +10,21 @@ import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /** Declarative, exact-state offline rules. Native placement behavior remains an oracle. */
 public final class RuleBook {
+  private static final JsonMapper MAPPER =
+      JsonMapper.builder(
+              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
+
   public record Rule(
       ResourceId id,
       BlockState before,
@@ -27,9 +36,15 @@ public final class RuleBook {
       Planner.Cost cost) {}
 
   private final List<Rule> rules;
+  private final Map<BlockState, List<Rule>> byBefore;
 
   private RuleBook(List<Rule> rules) {
     this.rules = List.copyOf(rules);
+    var grouped = new HashMap<BlockState, List<Rule>>();
+    for (var rule : rules)
+      grouped.computeIfAbsent(rule.before(), ignored -> new ArrayList<>()).add(rule);
+    grouped.replaceAll((ignored, matching) -> List.copyOf(matching));
+    byBefore = Map.copyOf(grouped);
   }
 
   public List<Rule> rules() {
@@ -42,17 +57,13 @@ public final class RuleBook {
 
   /** A registry validates exact before/after states against the chosen version. */
   public static RuleBook parse(String json, Compiler compiler, Registry registry) {
+    boolean previousTargetAvailability = compiler.targetAvailable();
     try {
-      var mapper =
-          JsonMapper.builder(
-                  JsonFactory.builder()
-                      .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-                      .build())
-              .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-              .build();
-      var root = object(mapper.readTree(json), "");
+      var root = object(MAPPER.readTree(json), "");
       keys(root, "", "schema", "rules");
-      if (!root.path("schema").canConvertToInt() || root.path("schema").intValue() != 1)
+      if (!root.path("schema").isIntegralNumber()
+          || !root.path("schema").canConvertToInt()
+          || root.path("schema").intValue() != 1)
         throw new IllegalArgumentException("/schema: expected 1");
       var array = root.get("rules");
       if (array == null || !array.isArray())
@@ -77,7 +88,7 @@ public final class RuleBook {
         }
         Planner.Action action;
         try {
-          action = Planner.Action.valueOf(string(o, "action", path).toUpperCase());
+          action = Planner.Action.valueOf(string(o, "action", path).toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ex) {
           throw new IllegalArgumentException(path + "/action: invalid action");
         }
@@ -85,7 +96,7 @@ public final class RuleBook {
             requires = guard(o, "requires", compiler, path),
             verify = guard(o, "verify", compiler, path);
         var cost =
-            o.has("cost") ? object(o.get("cost"), path + "/cost") : mapper.createObjectNode();
+            o.has("cost") ? object(o.get("cost"), path + "/cost") : MAPPER.createObjectNode();
         keys(cost, path + "/cost", "materials", "risk");
         int
             materials =
@@ -106,6 +117,8 @@ public final class RuleBook {
       return new RuleBook(rules);
     } catch (IOException ex) {
       throw new IllegalArgumentException("Invalid rule JSON", ex);
+    } finally {
+      compiler.targetAvailable(previousTargetAvailability);
     }
   }
 
@@ -113,17 +126,20 @@ public final class RuleBook {
   public Planner.Oracle oracle(Facts base) {
     return (pos, current, goal) -> {
       var proposals = new ArrayList<Planner.Proposal>();
+      var matching = byBefore.getOrDefault(current, List.of());
+      if (matching.isEmpty())
+        return new Planner.Prediction.NoLegalPlacement("No matching declared transition");
+      var before = overlay(base, pos, current, goal);
       boolean unknown = false;
-      for (var rule : rules) {
-        if (!rule.before().equals(current)) continue;
-        var before = overlay(base, pos, current, goal);
+      for (var rule : matching) {
         Truth when = rule.when() == null ? Truth.TRUE : rule.when().at(before, pos);
         Truth requires = rule.requires() == null ? Truth.TRUE : rule.requires().at(before, pos);
-        if (when == Truth.UNKNOWN || requires == Truth.UNKNOWN) {
+        Truth allowed = when.and(requires);
+        if (allowed == Truth.UNKNOWN) {
           unknown = true;
           continue;
         }
-        if (when != Truth.TRUE || requires != Truth.TRUE) continue;
+        if (allowed == Truth.FALSE) continue;
         if (rule.verify() != null) {
           Truth verified = rule.verify().at(overlay(base, pos, rule.after(), goal), pos);
           if (verified == Truth.UNKNOWN) {
@@ -216,7 +232,7 @@ public final class RuleBook {
   private static int positiveOrZero(ObjectNode n, String key, String path, int fallback) {
     var value = n.get(key);
     if (value == null) return fallback;
-    if (!value.canConvertToInt() || value.intValue() < 0)
+    if (!value.isIntegralNumber() || !value.canConvertToInt() || value.intValue() < 0)
       throw new IllegalArgumentException(path + "/" + key + ": expected nonnegative integer");
     return value.intValue();
   }

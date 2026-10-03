@@ -38,6 +38,22 @@ class PlanningTest {
   }
 
   @Test
+  void profileBindingDoesNotLeakTargetViewToLaterQueries() {
+    var compiler = Compiler.symbolic();
+    var profile =
+        new ProfileReader()
+            .read(
+                """
+                {"schema":1,"id":"user:source","scope":"box(0,0,0,1,0,0)",
+                 "select":{"where":"matches_target()"},"target":{"source":"user:blueprint"}}
+                """);
+    new ProfileReader().bind(profile, compiler);
+    assertThrows(
+        io.github.billstark001.latticium.dsl.Syntax.Failure.class,
+        () -> compiler.compile("matches_target()", SetType.POS));
+  }
+
+  @Test
   void designExampleCompilesOffline() {
     String json =
         """
@@ -116,6 +132,46 @@ class PlanningTest {
   }
 
   @Test
+  void scannerSkipsFactReadsOutsideKnownFalseScope() {
+    int[] worldReads = {0};
+    Facts facts =
+        new Facts() {
+          public Optional<WorldCell> world(Position p) {
+            worldReads[0]++;
+            return Optional.of(new WorldCell(stone, DIM, AIR, 0, true));
+          }
+
+          public TargetCell target(Position p) {
+            return new TargetCell.DontCare();
+          }
+
+          public Optional<Position> player() {
+            return Optional.empty();
+          }
+
+          public Optional<Set<ResourceId>> inventory() {
+            return Optional.empty();
+          }
+
+          public Truth selection(String n, Position p) {
+            return Truth.FALSE;
+          }
+        };
+    var compiler = Compiler.symbolic();
+    var result =
+        new SectionScanner()
+            .scan(
+                new SectionScanner.Bounds(DIM, 0, 0, 0, 1, 0, 0),
+                compiler.compile("x=0", SetType.POS),
+                compiler.compile("current(b{minecraft:stone})", SetType.POS),
+                facts,
+                1)
+            .getFirst();
+    assertEquals(1, result.trueCount());
+    assertEquals(1, worldReads[0]);
+  }
+
+  @Test
   void plannerEnforcesBreakPolicy() {
     var pos = new Position(DIM, 0, 0, 0);
     var planner = new Planner();
@@ -151,48 +207,98 @@ class PlanningTest {
   }
 
   @Test
-  void materialChoiceUsesAvailabilityAndVerifiableStates() {
+  void plannerReturnsLowestCostGoalRatherThanFirstDiscoveredGoal() {
     var pos = new Position(DIM, 0, 0, 0);
-    var c = Compiler.symbolic();
-    var items = c.compile("i{minecraft:stone,minecraft:dirt}", SetType.ITEM);
-    var stoneItem = STONE;
-    var dirt = ResourceId.parse("minecraft:dirt");
-    var facts =
-        new Facts() {
-          public Optional<WorldCell> world(Position p) {
-            return Optional.empty();
+    var intermediate = new BlockState(ResourceId.parse("minecraft:dirt"), Map.of());
+    Planner.Oracle oracle =
+        (p, current, goal) -> {
+          if (current.equals(stone)) {
+            return new Planner.Prediction.Proposals(
+                List.of(
+                    new Planner.Proposal(
+                        Planner.Action.PLACE,
+                        air,
+                        Set.of(pos),
+                        new Planner.Cost(5, 0, 0),
+                        "direct"),
+                    new Planner.Proposal(
+                        Planner.Action.INTERACT,
+                        intermediate,
+                        Set.of(pos),
+                        new Planner.Cost(1, 0, 0),
+                        "first")));
           }
-
-          public TargetCell target(Position p) {
-            return new TargetCell.DontCare();
-          }
-
-          public Optional<Position> player() {
-            return Optional.empty();
-          }
-
-          public Optional<Set<ResourceId>> inventory() {
-            return Optional.of(Set.of(stoneItem, dirt));
-          }
-
-          public Truth selection(String n, Position p) {
-            return Truth.FALSE;
-          }
+          return new Planner.Prediction.Proposals(
+              List.of(
+                  new Planner.Proposal(
+                      Planner.Action.INTERACT,
+                      air,
+                      Set.of(pos),
+                      new Planner.Cost(1, 0, 0),
+                      "second")));
         };
-    MaterialSelector.Oracle oracle =
-        (item, p) -> new MaterialSelector.Outcome.States(Set.of(new BlockState(item, Map.of())));
     var result =
-        new MaterialSelector()
-            .choose(
-                pos,
-                air,
-                items,
-                null,
-                facts,
-                Map.of(stoneItem, 4, dirt, 9),
-                List.of(stoneItem),
-                oracle);
-    assertEquals(stoneItem, ((MaterialSelector.Choice.Frozen) result).item());
+        assertInstanceOf(
+            Planner.Result.Ready.class,
+            new Planner()
+                .plan(
+                    pos,
+                    stone,
+                    new TargetCell.Clear(),
+                    new Profile.Policy(Profile.Policy.BreakMode.DENY, 1, 8),
+                    oracle,
+                    3));
+    assertEquals(2, result.cost().actions());
+    assertEquals(
+        List.of("first", "second"), result.steps().stream().map(Planner.Proposal::ruleId).toList());
+  }
+
+  @Test
+  void plannerContinuesPastUnknownBranchWhenAnotherBranchCanReachGoal() {
+    var pos = new Position(DIM, 0, 0, 0);
+    var unknown = new BlockState(ResourceId.parse("minecraft:dirt"), Map.of());
+    var known = new BlockState(ResourceId.parse("minecraft:granite"), Map.of());
+    Planner.Oracle oracle =
+        (p, current, goal) -> {
+          if (current.equals(unknown)) return new Planner.Prediction.Unknown("Missing facts");
+          if (current.equals(known))
+            return new Planner.Prediction.Proposals(
+                List.of(
+                    new Planner.Proposal(
+                        Planner.Action.INTERACT,
+                        air,
+                        Set.of(pos),
+                        new Planner.Cost(1, 0, 0),
+                        "finish")));
+          return new Planner.Prediction.Proposals(
+              List.of(
+                  new Planner.Proposal(
+                      Planner.Action.INTERACT,
+                      unknown,
+                      Set.of(pos),
+                      new Planner.Cost(1, 0, 0),
+                      "unknown"),
+                  new Planner.Proposal(
+                      Planner.Action.INTERACT,
+                      known,
+                      Set.of(pos),
+                      new Planner.Cost(1, 0, 0),
+                      "known")));
+        };
+    var policy = new Profile.Policy(Profile.Policy.BreakMode.DENY, 1, 8);
+    var planner = new Planner();
+    assertInstanceOf(
+        Planner.Result.Ready.class,
+        planner.plan(pos, stone, new TargetCell.Clear(), policy, oracle, 4));
+    assertInstanceOf(
+        Planner.Result.Deferred.class,
+        planner.plan(
+            pos,
+            stone,
+            new TargetCell.Clear(),
+            policy,
+            (p, current, goal) -> new Planner.Prediction.Unknown("Missing facts"),
+            4));
   }
 
   @Test
@@ -259,6 +365,23 @@ class PlanningTest {
     assertEquals(0, result.count());
     assertEquals(1, result.unknownCount());
     assertEquals(Truth.UNKNOWN, result.exists());
+
+    var terminals =
+        io.github.billstark001.latticium.dsl.Parser.document(
+            "query all() order by y asc limit 2; count all(); exists all();");
+    var expressions = Compiler.symbolic().compile(terminals);
+    var domain = List.of(new SectionScanner.Bounds(DIM, 0, 0, 0, 4, 0, 0));
+    var runner = new QueryRunner();
+    var limited =
+        runner.run(terminals.terminals().get(0), expressions.get(0), domain, registry, facts, 5);
+    assertEquals(
+        List.of(new Position(DIM, 0, 0, 0), new Position(DIM, 1, 0, 0)), limited.matches());
+    assertEquals(5, limited.count());
+    var counted =
+        runner.run(terminals.terminals().get(1), expressions.get(1), domain, registry, facts, 5);
+    assertEquals(List.of(), counted.matches());
+    assertEquals(5, counted.count());
+    assertEquals(Truth.TRUE, counted.exists());
   }
 
   @Test

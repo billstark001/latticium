@@ -4,6 +4,7 @@ import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -11,6 +12,7 @@ import java.util.Set;
 /** Chooses one concrete, verifiable state for an item-targeted candidate. */
 public final class MaterialSelector {
   public interface Oracle {
+    /** Returns verifiable placement states, unknown data, or an unsupported capability. */
     Outcome statesFor(ResourceId item, Position pos);
   }
 
@@ -26,14 +28,18 @@ public final class MaterialSelector {
     record Unsupported(String reason) implements Outcome {}
   }
 
-  public sealed interface Choice permits Choice.Frozen, Choice.Deferred, Choice.NoTarget {
+  public sealed interface Choice
+      permits Choice.Frozen, Choice.Deferred, Choice.Unsupported, Choice.NoTarget {
     record Frozen(ResourceId item, TargetCell.Exact target) implements Choice {}
 
     record Deferred(String reason) implements Choice {}
 
+    record Unsupported(String reason) implements Choice {}
+
     record NoTarget(String reason) implements Choice {}
   }
 
+  /** Chooses an available item with a verifiable accepted state, honoring preference order. */
   public Choice choose(
       Position pos,
       BlockState current,
@@ -47,18 +53,18 @@ public final class MaterialSelector {
       throw new IllegalArgumentException("Invalid target set");
     var ids = new ArrayList<ResourceId>();
     boolean unknown = false;
+    String unsupported = null;
     for (var entry : inventory.entrySet())
       if (entry.getValue() > 0) {
         Truth membership = items.contains(facts, entry.getKey());
         if (membership == Truth.TRUE) ids.add(entry.getKey());
         else if (membership == Truth.UNKNOWN) unknown = true;
       }
+    var preferenceRank = new HashMap<ResourceId, Integer>();
+    for (int i = 0; i < preferred.size(); i++) preferenceRank.putIfAbsent(preferred.get(i), i);
     ids.sort(
         Comparator.comparingInt(
-                (ResourceId id) -> {
-                  int index = preferred.indexOf(id);
-                  return index < 0 ? Integer.MAX_VALUE : index;
-                })
+                (ResourceId id) -> preferenceRank.getOrDefault(id, Integer.MAX_VALUE))
             .thenComparing(Comparator.<ResourceId>comparingInt(inventory::get).reversed())
             .thenComparing(ResourceId::compareTo));
     for (var item : ids) {
@@ -67,21 +73,28 @@ public final class MaterialSelector {
         unknown = true;
         continue;
       }
+      if (result instanceof Outcome.Unsupported unavailable) {
+        if (unsupported == null) unsupported = unavailable.reason();
+        continue;
+      }
       if (!(result instanceof Outcome.States s)) continue;
-      if (states != null
-          && s.states().stream().anyMatch(state -> states.contains(facts, state) == Truth.UNKNOWN))
-        unknown = true;
-      var candidates =
-          s.states().stream()
-              .filter(state -> states == null || states.contains(facts, state) == Truth.TRUE)
-              .sorted(Comparator.comparing(BlockState::toString))
-              .toList();
+      var candidates = new ArrayList<BlockState>();
+      for (var state : s.states()) {
+        Truth membership = states == null ? Truth.TRUE : states.contains(facts, state);
+        if (membership == Truth.TRUE) candidates.add(state);
+        else if (membership == Truth.UNKNOWN) unknown = true;
+      }
       if (candidates.isEmpty()) continue;
-      var chosen = candidates.contains(current) ? current : candidates.getFirst();
+      var chosen =
+          candidates.contains(current)
+              ? current
+              : candidates.stream()
+                  .min(Comparator.comparing(BlockState::canonicalId))
+                  .orElseThrow();
       return new Choice.Frozen(item, new TargetCell.Exact(chosen));
     }
-    return unknown
-        ? new Choice.Deferred("Placement facts unavailable")
-        : new Choice.NoTarget("No available item has a verifiable accepted state");
+    if (unknown) return new Choice.Deferred("Placement facts unavailable");
+    if (unsupported != null) return new Choice.Unsupported(unsupported);
+    return new Choice.NoTarget("No available item has a verifiable accepted state");
   }
 }

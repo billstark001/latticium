@@ -19,6 +19,7 @@ public final class JobController {
   private final Profile.Policy policy;
   private final Position position;
   private final TargetCell target;
+  private final BlockState initial;
   private final List<Planner.Proposal> steps;
   private int next;
   private Host.Receipt receipt;
@@ -37,6 +38,7 @@ public final class JobController {
     this.policy = Objects.requireNonNull(policy);
     this.position = Objects.requireNonNull(position);
     this.target = Objects.requireNonNull(target);
+    this.initial = Objects.requireNonNull(plan.initial());
     this.steps = plan.steps();
     if (steps.isEmpty()) throw new IllegalArgumentException("Empty action plan");
   }
@@ -79,6 +81,7 @@ public final class JobController {
     }
   }
 
+  /** Submits the next step for the original session after rechecking the prior result. */
   public void submit(Host.Snapshot fresh, BlockState current, Host.ActionGateway gateway) {
     if (status != Status.READY) return;
     if (!session.equals(fresh.session())) {
@@ -88,6 +91,12 @@ public final class JobController {
     }
     if (next >= steps.size()) {
       status = Status.COMPLETE;
+      return;
+    }
+    BlockState expected = next == 0 ? initial : steps.get(next - 1).result();
+    if (!expected.equals(current)) {
+      status = Status.BLOCKED;
+      reason = "World state changed since planning or confirmation";
       return;
     }
     var step = steps.get(next);
@@ -119,6 +128,7 @@ public final class JobController {
     } else reason = ((Host.Submission.Deferred) submission).reason();
   }
 
+  /** Advances a submitted step only after the observation source confirms its result. */
   public void observe(Host.ObservationSource source) {
     if (status != Status.WAITING) return;
     var observation = source.observe(receipt, steps.get(next).result());

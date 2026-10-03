@@ -13,6 +13,10 @@ public record Profile(
     Select select,
     Target target,
     Policy policy) {
+  public Profile {
+    uses = List.copyOf(uses);
+  }
+
   public record Activation(String where, Mode mode, boolean fireIfInside) {
     public enum Mode {
       ENTER,
@@ -33,7 +37,11 @@ public record Profile(
   public sealed interface Target permits Items, Clear, Source {}
 
   public record Items(String expression, String states, List<ResourceId> preferred)
-      implements Target {}
+      implements Target {
+    public Items {
+      preferred = List.copyOf(preferred);
+    }
+  }
 
   public record Clear() implements Target {}
 

@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /** Strict schema reader. Errors include a JSON pointer; DSL errors preserve expression offsets. */
@@ -30,6 +31,7 @@ public final class ProfileReader {
     }
   }
 
+  /** Reads schema-1 JSON, rejecting unknown and duplicate fields with pointer-based diagnostics. */
   public Profile read(String json) {
     try {
       JsonNode root = mapper.readTree(json);
@@ -139,21 +141,29 @@ public final class ProfileReader {
     }
   }
 
+  /** Binds a profile without imports; use the resolver overload when {@code use} is present. */
   public Profile.Bound bind(Profile p, Compiler compiler) {
     if (!p.uses().isEmpty()) throw new Error("/use", "Module resolver required");
     return bindLoaded(p, compiler);
   }
 
+  /** Resolves declaration-only modules before binding phase-specific profile expressions. */
   public Profile.Bound bind(Profile p, Compiler compiler, ModuleLoader.Resolver modules) {
+    boolean previousTargetAvailability = compiler.targetAvailable();
     try {
+      compiler.targetAvailable(false);
       new ModuleLoader(modules, compiler).loadAll(p.uses());
     } catch (IllegalArgumentException | io.github.billstark001.latticium.dsl.Syntax.Failure ex) {
       throw new Error("/use", ex.getMessage());
+    } finally {
+      compiler.targetAvailable(previousTargetAvailability);
     }
     return bindLoaded(p, compiler);
   }
 
   private Profile.Bound bindLoaded(Profile p, Compiler compiler) {
+    boolean previousTargetAvailability = compiler.targetAvailable();
+    compiler.targetAvailable(false);
     try {
       var activation =
           p.activation() == null
@@ -181,6 +191,8 @@ public final class ProfileReader {
       return new Profile.Bound(p, activation, scope, select, items, states);
     } catch (io.github.billstark001.latticium.dsl.Syntax.Failure ex) {
       throw new Error("/expression", ex.getMessage());
+    } finally {
+      compiler.targetAvailable(previousTargetAvailability);
     }
   }
 
@@ -248,7 +260,7 @@ public final class ProfileReader {
 
   private static <T extends Enum<T>> T choice(String raw, Class<T> type, String p) {
     try {
-      return Enum.valueOf(type, raw.toUpperCase());
+      return Enum.valueOf(type, raw.toUpperCase(Locale.ROOT));
     } catch (IllegalArgumentException ex) {
       throw new Error(p, "Invalid choice: " + raw);
     }
