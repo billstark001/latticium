@@ -32,6 +32,7 @@ public final class Compiler {
     private final Set<String> active=new HashSet<>();
     private final int maxRadius;
     private boolean targetAvailable;
+    private int nodes;
 
     /** Type-check without a live registry. Rebind with a real registry before evaluating. */
     public static Compiler symbolic() { return new Compiler(new SymbolicRegistry()); }
@@ -52,8 +53,9 @@ public final class Compiler {
         return this;
     }
     public Compiler targetAvailable(boolean available) { targetAvailable=available; return this; }
-    public Bound compile(String source, SetType expected) { return bind(Parser.expression(source),expected,Map.of(),0); }
+    public Bound compile(String source, SetType expected) { nodes=0;return bind(Parser.expression(source),expected,Map.of(),0); }
     public List<Bound> compile(Document doc) {
+        nodes=0;
         for(var fn:doc.functions()) if(BUILTINS.contains(fn.name())||primitives.containsKey(fn.name())||functions.putIfAbsent(fn.name(),fn)!=null) throw new Failure("Duplicate or reserved function",fn.span());
         for(var d:doc.declarations()) {
             if(declarations.containsKey(d.name()) || functions.containsKey(d.name()) || BUILTINS.contains(d.name()) || primitives.containsKey(d.name())) throw new Failure("Duplicate name",d.span());
@@ -69,6 +71,7 @@ public final class Compiler {
     }
     private Bound bind(Expr e, SetType expected, Map<String,Bound> locals, int depth) {
         if(depth>64) throw new Failure("Expansion depth exceeded",e.span());
+        if(++nodes>10000) throw new Failure("Expanded node budget exceeded",e.span());
         Bound result;
         if(e instanceof Literal l) result=literal(l,expected);
         else if(e instanceof Atom a) {
@@ -133,8 +136,13 @@ public final class Compiler {
             if(!active.add(n)) throw new Failure("Recursive function: "+n,c.span());
             try {
                 var env=new HashMap<String,Bound>(locals);
-                for(int i=0;i<a.size();i++) { var p=fn.parameters().get(i); if(p.integer()) throw new Failure("Int def parameters are reserved for bounded primitives",c.span()); env.put(p.name(),bind(a.get(i),p.type(),locals,depth+1)); }
-                return bind(fn.body(),fn.result(),env,depth+1);
+                var integers=new HashMap<String,Expr>();
+                for(int i=0;i<a.size();i++) {
+                    var p=fn.parameters().get(i);
+                    if(p.integer()) { number(a.get(i)); integers.put(p.name(),a.get(i)); }
+                    else env.put(p.name(),bind(a.get(i),p.type(),locals,depth+1));
+                }
+                return bind(substitute(fn.body(),integers),fn.result(),env,depth+1);
             } finally { active.remove(n); }
         }
         return switch(n) {
@@ -263,4 +271,12 @@ public final class Compiler {
     private static int number(Expr e) { try { return Integer.parseInt(name(e)); } catch(NumberFormatException ex) { throw new Failure("Expected integer",e.span()); } }
     private static IntRange range(Expr e) { if(e instanceof Range r && r.axis()=='\0') return r.range(); if(e instanceof Name) return new IntRange(number(e),number(e)); throw new Failure("Expected integer range",e.span()); }
     private static ResourceId id(Expr e) { if(e instanceof Atom a && !a.member().tag() && a.member().properties().isEmpty()) return a.member().id(); throw new Failure("Expected resource ID",e.span()); }
+    private static Expr substitute(Expr expression,Map<String,Expr> integers) {
+        if(integers.isEmpty())return expression;
+        if(expression instanceof Name n)return integers.getOrDefault(n.value(),n);
+        if(expression instanceof Binary b)return new Binary(b.operator(),substitute(b.left(),integers),substitute(b.right(),integers),b.span());
+        if(expression instanceof Negate n)return new Negate(substitute(n.inner(),integers),n.span());
+        if(expression instanceof Call c)return new Call(c.name(),c.args().stream().map(e->substitute(e,integers)).toList(),c.span());
+        return expression;
+    }
 }

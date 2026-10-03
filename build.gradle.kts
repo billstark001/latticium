@@ -9,6 +9,7 @@ subprojects {
     tasks.withType<JavaCompile>().configureEach {
         options.release.set(21)
         options.encoding = "UTF-8"
+        options.compilerArgs.add("-Xlint:deprecation")
     }
     tasks.withType<Test>().configureEach { useJUnitPlatform() }
     dependencies {

@@ -44,6 +44,13 @@ class CompilerTest {
         assertEquals(1,bound.size());
         assertEquals(SetType.POS,bound.getFirst().type());
     }
+    @Test void boundedIntegerFunctionParameterExpands() {
+        var doc=Parser.document("def nearby(r: Int): PosSet = sphere(player,r); query nearby(2);");
+        var bound=new Compiler(REGISTRY).compile(doc).getFirst();
+        assertEquals(Truth.TRUE,bound.at(FACTS,ORIGIN.offset(2,0,0)));
+        assertEquals(Truth.FALSE,bound.at(FACTS,ORIGIN.offset(3,0,0)));
+        assertThrows(Syntax.Failure.class,()->new Compiler(REGISTRY).compile(Parser.document("def nearby(r: Int): PosSet = sphere(player,r); query nearby(40);")));
+    }
     @Test void targetPhaseAndSymbolicPass() {
         assertThrows(Syntax.Failure.class,()->new Compiler(REGISTRY).compile("matches_target()",SetType.POS));
         assertEquals(Truth.FALSE,new Compiler(REGISTRY).targetAvailable(true).compile("matches_target()",SetType.POS).at(FACTS,ORIGIN));
