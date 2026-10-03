@@ -23,7 +23,9 @@ public final class RuleBook {
     private final List<Rule> rules;
     private RuleBook(List<Rule> rules){this.rules=List.copyOf(rules);}
     public List<Rule> rules(){return rules;}
-    public static RuleBook parse(String json,Compiler compiler) {
+    public static RuleBook parse(String json,Compiler compiler) {return parse(json,compiler,null);}
+    /** A registry validates exact before/after states against the chosen version. */
+    public static RuleBook parse(String json,Compiler compiler,Registry registry) {
         try {
             var mapper=JsonMapper.builder(JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build()).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
             var root=object(mapper.readTree(json),""); keys(root,"","schema","rules");
@@ -35,6 +37,10 @@ public final class RuleBook {
                 String path="/rules/"+index++;var o=object(raw,path);keys(o,path,"id","before","after","action","when","requires","verify","cost");
                 var id=ResourceId.parse(string(o,"id",path));if(!ids.add(id))throw new IllegalArgumentException(path+": duplicate rule ID");
                 var before=state(o.get("before"),path+"/before");var after=state(o.get("after"),path+"/after");
+                if(registry!=null) {
+                    if(!registry.states(before.block()).contains(before))throw new IllegalArgumentException(path+"/before: illegal state for registry");
+                    if(!registry.states(after.block()).contains(after))throw new IllegalArgumentException(path+"/after: illegal state for registry");
+                }
                 Planner.Action action;try{action=Planner.Action.valueOf(string(o,"action",path).toUpperCase());}catch(IllegalArgumentException ex){throw new IllegalArgumentException(path+"/action: invalid action");}
                 Compiler.Bound when=guard(o,"when",compiler,path),requires=guard(o,"requires",compiler,path),verify=guard(o,"verify",compiler,path);
                 var cost=o.has("cost")?object(o.get("cost"),path+"/cost"):mapper.createObjectNode();keys(cost,path+"/cost","materials","risk");
