@@ -4,7 +4,15 @@ This repository is implementing the Minecraft-independent core of a client const
 
 ## Build and test
 
-Run `./gradlew test` with JDK 21 available as a Gradle toolchain. `dsl-core` and `planning-core` compile with `--release 21` and run their tests on Java 21. They have no Minecraft dependency.
+Use JDK 21 as the Gradle toolchain (set `JAVA_HOME` if Gradle does not discover it). The core modules compile with `--release 21` and have no Minecraft dependency.
+
+```sh
+./gradlew formatAll   # Spotless: google-java-format for Java, ktfmt for Gradle Kotlin scripts
+./gradlew check       # format validation, compiler diagnostics, 500-line source limit, offline tests
+./gradlew lint        # checks without running the tests
+```
+
+Each formatted Java or Kotlin file, including Gradle Kotlin scripts, must stay at or below 500 lines; both `formatAll` and `check` enforce the limit. Java compilation uses `-Xlint:all,-serial -Werror`. The official-data fetcher and catalog baker are Kotlin Gradle tasks; no Python runtime is needed.
 
 To validate with locally downloaded Mojang 26.2/26.3 data, follow [official data validation](docs/official-data-validation.md).
 
@@ -27,9 +35,11 @@ The `versions` and `integrations` directories are integration boundaries, not bu
 - Position predicates: coordinates, boxes, player/point spheres, selection, neighbor/offset, current/target state, biome, fluid, light, solid, surface, target comparison and inventory.
 - Explicit `Truth.UNKNOWN` for missing facts, including under negation. Symbolic compilation allows a rule/profile to be checked before a world registry exists; real registry binding must happen before evaluation.
 - Strict schema-1 profile JSON with duplicate/unknown key rejection, typed expression fields, explicit declaration module imports, target alternatives and policy budgets. An automatic scan requires a finite root scope expression. Activation tracking implements `enter` and `while` without turning unknown facts into false transitions.
-- Bounded read-only query execution, 4096-bit section result masks, inventory-aware material choice, and a policy-filtered state transition search. `RuleBook` accepts exact before/after states and DSL guards; a version-specific oracle must supply real placement behavior.
+- Bounded read-only query execution, 4096-bit section result masks, inventory-aware material choice that distinguishes missing facts from unsupported placement, and a policy-filtered state transition search. `RuleBook` accepts exact before/after states and DSL guards; a version-specific oracle must supply real placement behavior.
 - Neutral capture, action and observation contracts plus a session-bound job controller that waits for observation before confirming a submitted step.
+
+Automatic profile scopes currently need a visible finite root such as `box(...)`, `sphere(...)`, or `selection(...)`; intersections with such a root and unions of finite roots are accepted. A named or function-wrapped finite expression is not yet proven finite by the profile reader.
 
 ## Current boundary
 
-The offline implementation does not send actions, predict Minecraft placement, import `.litematic`, or promise compatibility with any game version. In particular, it does not yet include a live world driver, full registry schema validation, every grammar feature, optimized sorting, or per-section snapshot capture. These are required before shipping a working client mod. A planner result is only a proposed sequence; a future game adapter must recheck preconditions and observe world changes after each action.
+The offline implementation does not send actions, predict Minecraft placement, import `.litematic`, or promise compatibility with any game version. In particular, it does not yet include a live world driver, complete registry provenance validation, every grammar feature, section-prioritized spatial sorting, or per-section snapshot capture. These are required before shipping a working client mod. A planner result is only a proposed sequence; a future game adapter must recheck preconditions and observe world changes after each action.
