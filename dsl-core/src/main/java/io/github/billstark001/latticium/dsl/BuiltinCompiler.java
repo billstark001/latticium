@@ -6,15 +6,17 @@ import static io.github.billstark001.latticium.dsl.Syntax.*;
 import io.github.billstark001.latticium.dsl.Compiler.Bound;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /** Bind the fixed, read-only DSL functions without mixing them with user declarations. */
 final class BuiltinCompiler {
-  private static final ResourceId AIR = ResourceId.parse("minecraft:air");
   private static final Pattern INTEGER_PROPERTY = Pattern.compile("-?[0-9]+");
+  private static final Set<String> COMPARISONS = Set.of("lt", "le", "gt", "ge");
 
   private record Delta(int x, int y, int z) {}
+
+  private record Point(int x, int y, int z) {}
 
   private static final List<Delta> NEIGHBORS =
       List.of(
@@ -86,7 +88,12 @@ final class BuiltinCompiler {
         arity(c, 1);
         var b = compiler.bind(a.getFirst(), SetType.BLOCK, locals, depth);
         yield new Bound(
-            SetType.STATE, (f, p, v) -> b.contains(f, ((BlockState) v).block()), b.radius());
+            SetType.STATE,
+            (f, p, v) -> {
+              var state = (BlockState) v;
+              return compiler.legalState(state) ? b.contains(f, state.block()) : Truth.FALSE;
+            },
+            b.radius());
       }
       case "blocks_of" -> {
         arity(c, 1);
@@ -108,7 +115,12 @@ final class BuiltinCompiler {
         var pair = pair(a.getFirst());
         yield new Bound(
             SetType.STATE,
-            (f, p, v) -> truth(pair.value().equals(((BlockState) v).properties().get(pair.key()))),
+            (f, p, v) -> {
+              var state = (BlockState) v;
+              return truth(
+                  compiler.legalState(state)
+                      && pair.value().equals(state.properties().get(pair.key())));
+            },
             0);
       }
       case "state" -> {
@@ -131,10 +143,13 @@ final class BuiltinCompiler {
         arity(c, 2);
         String key = name(a.get(0));
         var range = range(a.get(1));
+        requireIntegerProperty(key, a.getFirst());
         yield new Bound(
             SetType.STATE,
             (f, p, v) -> {
-              String value = ((BlockState) v).properties().get(key);
+              var state = (BlockState) v;
+              if (!compiler.legalState(state)) return Truth.FALSE;
+              String value = state.properties().get(key);
               if (value == null || !INTEGER_PROPERTY.matcher(value).matches()) return Truth.FALSE;
               try {
                 return truth(range.contains(Integer.parseInt(value)));
@@ -219,7 +234,7 @@ final class BuiltinCompiler {
               if (world.isEmpty() || world.get().state() == null) return Truth.UNKNOWN;
               return t instanceof TargetCell.Exact x
                   ? truth(x.state().equals(world.get().state()))
-                  : truth(world.get().state().block().equals(AIR));
+                  : truth(isVanillaAir(world.get().state()));
             },
             0);
       }
@@ -228,8 +243,9 @@ final class BuiltinCompiler {
         compiler.needsTarget(c);
         String key = name(a.getFirst());
         String relation = n.equals("compare") ? name(a.get(1)) : "";
-        if (n.equals("compare") && !List.of("lt", "le", "gt", "ge").contains(relation))
+        if (n.equals("compare") && !COMPARISONS.contains(relation))
           throw new Failure("Invalid relation", c.span());
+        if (n.equals("compare")) requireIntegerProperty(key, a.getFirst());
         yield new Bound(
             SetType.POS,
             (f, p, v) -> {
@@ -263,45 +279,44 @@ final class BuiltinCompiler {
         var b = compiler.bind(a.getFirst(), SetType.ITEM, locals, depth);
         yield new Bound(
             SetType.ITEM,
-            (f, p, v) ->
-                f.inventory()
-                    .map(items -> truth(items.contains(v)).and(b.contains(f, v)))
-                    .orElse(Truth.UNKNOWN),
-            0);
+            (f, p, v) -> {
+              Truth eligible = b.contains(f, v);
+              if (eligible == Truth.FALSE) return Truth.FALSE;
+              return f.inventory()
+                  .map(items -> eligible.and(truth(items.contains(v))))
+                  .orElse(Truth.UNKNOWN);
+            },
+            b.radius());
       }
       case "sphere" -> {
         arity(c, 2);
         int r = number(a.get(1));
         if (r < 0 || r > compiler.maxRadius())
           throw new Failure("Sphere radius exceeds budget", c.span());
-        Position fixed = null;
+        Point fixed = null;
         if (a.getFirst() instanceof Call point && point.name().equals("point")) {
           arity(point, 3);
           fixed =
-              new Position(
-                  ResourceId.parse("minecraft:overworld"),
+              new Point(
                   number(point.args().get(0)),
                   number(point.args().get(1)),
                   number(point.args().get(2)));
         } else if (!(a.getFirst() instanceof Name anchor) || !anchor.value().equals("player"))
           throw new Failure("Expected player or point anchor", a.getFirst().span());
-        Position anchorPoint = fixed;
+        Point anchorPoint = fixed;
         yield new Bound(
             SetType.POS,
             (f, p, v) -> {
-              var center =
-                  anchorPoint == null
-                      ? f.player()
-                      : Optional.of(
-                          new Position(
-                              p.dimension(), anchorPoint.x(), anchorPoint.y(), anchorPoint.z()));
-              return center
-                  .map(
-                      q ->
-                          truth(
-                              p.dimension().equals(q.dimension())
-                                  && squared(p, q) <= ((long) r * r)))
-                  .orElse(Truth.UNKNOWN);
+              if (anchorPoint != null)
+                return truth(
+                    withinSphere(
+                        p.x(), p.y(), p.z(), anchorPoint.x(), anchorPoint.y(), anchorPoint.z(), r));
+              var player = f.player();
+              if (player.isEmpty()) return Truth.UNKNOWN;
+              var center = player.get();
+              return truth(
+                  p.dimension().equals(center.dimension())
+                      && withinSphere(p.x(), p.y(), p.z(), center.x(), center.y(), center.z(), r));
             },
             0);
       }
@@ -332,8 +347,8 @@ final class BuiltinCompiler {
             SetType.POS,
             (f, p, v) -> {
               var w = f.world(p);
-              if (w.isEmpty() || w.get().solid() == null) return Truth.UNKNOWN;
-              if (!w.get().solid()) return Truth.FALSE;
+              if (w.isEmpty() || w.get().state() == null) return Truth.UNKNOWN;
+              if (isVanillaAir(w.get().state())) return Truth.FALSE;
               Truth result = Truth.FALSE;
               for (var d : NEIGHBORS) {
                 Position neighbor;
@@ -350,7 +365,7 @@ final class BuiltinCompiler {
                                 cell ->
                                     cell.state() == null
                                         ? Truth.UNKNOWN
-                                        : truth(cell.state().block().equals(AIR)))
+                                        : truth(isVanillaAir(cell.state())))
                             .orElse(Truth.UNKNOWN));
                 if (result == Truth.TRUE) break;
               }
@@ -372,6 +387,25 @@ final class BuiltinCompiler {
     return bound.at(facts, neighbor);
   }
 
+  private void requireIntegerProperty(String key, Expr source) {
+    if (compiler.symbolicRegistry()) return;
+    boolean found = false;
+    for (var block : compiler.registry().universe(SetType.BLOCK))
+      for (var state : compiler.registry().states(block)) {
+        var value = state.properties().get(key);
+        if (value == null) continue;
+        found = true;
+        if (!INTEGER_PROPERTY.matcher(value).matches())
+          throw new Failure("Property is not integer-valued: " + key, source.span());
+        try {
+          Integer.parseInt(value);
+        } catch (NumberFormatException ex) {
+          throw new Failure("Property value exceeds integer range: " + key, source.span());
+        }
+      }
+    if (!found) throw new Failure("Unknown integer property: " + key, source.span());
+  }
+
   private static Bound constant(boolean value) {
     return new Bound(SetType.POS, (f, p, v) -> truth(value), 0);
   }
@@ -380,9 +414,16 @@ final class BuiltinCompiler {
     return value ? Truth.TRUE : Truth.FALSE;
   }
 
-  private static double squared(Position p, Position q) {
-    double x = (double) p.x() - q.x(), y = (double) p.y() - q.y(), z = (double) p.z() - q.z();
-    return x * x + y * y + z * z;
+  private static boolean withinSphere(int px, int py, int pz, int qx, int qy, int qz, int radius) {
+    long remaining = (long) radius * radius;
+    long dx = (long) px - qx;
+    if (Math.abs(dx) > radius) return false;
+    remaining -= dx * dx;
+    long dy = (long) py - qy;
+    if (Math.abs(dy) > radius || dy * dy > remaining) return false;
+    remaining -= dy * dy;
+    long dz = (long) pz - qz;
+    return Math.abs(dz) <= radius && dz * dz <= remaining;
   }
 
   static void arity(Call c, int expected) {

@@ -76,6 +76,80 @@ class CompilerTest {
   }
 
   @Test
+  void inventoryUnknownDoesNotHideKnownSetExclusions() {
+    Facts missingInventory =
+        new Facts() {
+          public Optional<WorldCell> world(Position p) {
+            return FACTS.world(p);
+          }
+
+          public TargetCell target(Position p) {
+            return FACTS.target(p);
+          }
+
+          public Optional<Position> player() {
+            return FACTS.player();
+          }
+
+          public Optional<Set<ResourceId>> inventory() {
+            return Optional.empty();
+          }
+
+          public Truth selection(String name, Position p) {
+            return FACTS.selection(name, p);
+          }
+        };
+    var bound = new Compiler(REGISTRY).compile("inventory(i{stone})", SetType.ITEM);
+    assertEquals(Truth.UNKNOWN, bound.contains(missingInventory, STONE));
+    assertEquals(Truth.FALSE, bound.contains(missingInventory, AIR));
+  }
+
+  @Test
+  void surfaceMeansNonAirBlockTouchingAirRegardlessOfSolidity() {
+    var east = ORIGIN.offset(1, 0, 0);
+    var torch = new BlockState(ResourceId.parse("minecraft:torch"), Map.of());
+    Facts facts =
+        new Facts() {
+          public Optional<WorldCell> world(Position p) {
+            if (p.equals(ORIGIN)) return Optional.of(new WorldCell(torch, null, null, null, false));
+            if (p.equals(east))
+              return Optional.of(
+                  new WorldCell(new BlockState(AIR, Map.of()), null, null, null, false));
+            return Optional.empty();
+          }
+
+          public TargetCell target(Position p) {
+            return new TargetCell.DontCare();
+          }
+
+          public Optional<Position> player() {
+            return Optional.empty();
+          }
+
+          public Optional<Set<ResourceId>> inventory() {
+            return Optional.empty();
+          }
+
+          public Truth selection(String name, Position p) {
+            return Truth.FALSE;
+          }
+        };
+    var surface = Compiler.symbolic().compile("surface()", SetType.POS);
+    assertEquals(Truth.TRUE, surface.at(facts, ORIGIN));
+    assertEquals(Truth.FALSE, surface.at(facts, east));
+    assertEquals(Truth.UNKNOWN, surface.at(facts, ORIGIN.offset(2, 0, 0)));
+  }
+
+  @Test
+  void fixedPointSphereUsesTheEvaluatedDimension() {
+    var nether = ResourceId.parse("minecraft:the_nether");
+    var center = new Position(nether, 1, 2, 3);
+    var sphere = Compiler.symbolic().compile("sphere(point(1,2,3),0)", SetType.POS);
+    assertEquals(Truth.TRUE, sphere.at(FACTS, center));
+    assertEquals(Truth.FALSE, sphere.at(FACTS, center.offset(1, 0, 0)));
+  }
+
+  @Test
   void typesAndExpectedLiterals() {
     var c = new Compiler(REGISTRY);
     assertThrows(Syntax.Failure.class, () -> c.compile("b{stone} & i{stone}", null));
@@ -107,6 +181,8 @@ class CompilerTest {
     assertThrows(Syntax.Failure.class, () -> Parser.document("count all() limit any 1;"));
     assertThrows(Syntax.Failure.class, () -> Parser.document("exists all() order by x;"));
     assertThrows(Syntax.Failure.class, () -> Parser.document("query all() limit any 01;"));
+    assertThrows(
+        Syntax.Failure.class, () -> Parser.document("query all() order by x limit any 1;"));
     assertThrows(Syntax.Failure.class, () -> Parser.expression("x=+1"));
     var compiler = new Compiler(REGISTRY);
     compiler.compile(Parser.document("rock: BlockSet = b{stone};"));
@@ -120,6 +196,24 @@ class CompilerTest {
                 .compile(
                     Parser.document(
                         "def first(): PosSet = second(); def second(): PosSet = first();")));
+    assertThrows(
+        Syntax.Failure.class,
+        () -> new Compiler(REGISTRY).compile(Parser.document("rock := minecraft:stone;")));
+    assertThrows(
+        Syntax.Failure.class,
+        () -> new Compiler(REGISTRY).compile(Parser.document("rock := minecraft:stone & y=0;")));
+    assertEquals(
+        SetType.POS,
+        new Compiler(REGISTRY)
+            .compile(Parser.document("rock: PosSet = minecraft:stone; query rock;"))
+            .getFirst()
+            .type());
+    assertEquals(
+        SetType.POS,
+        new Compiler(REGISTRY)
+            .compile(Parser.document("rock := dimension(minecraft:overworld); query rock;"))
+            .getFirst()
+            .type());
   }
 
   @Test
@@ -140,6 +234,23 @@ class CompilerTest {
         () ->
             compiler.compile(
                 Parser.document("def duplicate(x: PosSet, x: PosSet): PosSet = x; query all();")));
+  }
+
+  @Test
+  void unusedFunctionBodiesAreCheckedWhenDeclared() {
+    var compiler = new Compiler(REGISTRY);
+    assertThrows(
+        Syntax.Failure.class,
+        () -> compiler.compile(Parser.document("def broken(): PosSet = unknown_function();")));
+    assertThrows(Syntax.Failure.class, () -> compiler.compile("broken()", SetType.POS));
+    assertThrows(
+        Syntax.Failure.class,
+        () -> compiler.compile(Parser.document("def wrong(s: BlockSet): PosSet = s;")));
+    compiler.compile(Parser.document("def target_check(): PosSet = matches_target();"));
+    assertThrows(Syntax.Failure.class, () -> compiler.compile("target_check()", SetType.POS));
+    assertEquals(
+        Truth.FALSE,
+        compiler.targetAvailable(true).compile("target_check()", SetType.POS).at(FACTS, ORIGIN));
   }
 
   @Test
@@ -226,6 +337,45 @@ class CompilerTest {
     assertEquals(1, b.radius());
     assertEquals(Truth.TRUE, b.at(FACTS, ORIGIN.offset(-1, 0, 0)));
     assertThrows(IllegalArgumentException.class, () -> c.registerPrimitive("current", primitive));
+    c.compile(
+        Parser.document("rock: BlockSet = b{stone}; def passthrough(p: PosSet): PosSet = p;"));
+    assertThrows(IllegalArgumentException.class, () -> c.registerPrimitive("rock", primitive));
+    assertThrows(
+        IllegalArgumentException.class, () -> c.registerPrimitive("passthrough", primitive));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new Compiler.Bound(SetType.POS, (facts, pos, value) -> Truth.TRUE, -1));
+  }
+
+  @Test
+  void primitiveSignatureIsFrozenAtRegistration() {
+    var parameters = new java.util.ArrayList<>(java.util.List.of(SetType.POS));
+    int[] radius = {1};
+    var primitive =
+        new Compiler.Primitive() {
+          public java.util.List<SetType> parameters() {
+            return parameters;
+          }
+
+          public SetType result() {
+            return SetType.POS;
+          }
+
+          public int radius() {
+            return radius[0];
+          }
+
+          public Compiler.Membership bind(java.util.List<Compiler.Bound> args) {
+            return args.getFirst().membership();
+          }
+        };
+    var compiler = new Compiler(REGISTRY).registerPrimitive("stable", primitive);
+    parameters.clear();
+    radius[0] = 100;
+    var bound = compiler.compile("stable(all())", SetType.POS);
+    assertEquals(1, bound.radius());
+    assertEquals(Truth.TRUE, bound.at(FACTS, ORIGIN));
+    assertThrows(Syntax.Failure.class, () -> compiler.compile("stable()", SetType.POS));
   }
 
   @Test
@@ -262,5 +412,77 @@ class CompilerTest {
     assertEquals(
         Truth.UNKNOWN,
         compiler.compile("blocks_of(uncertain())", SetType.BLOCK).contains(FACTS, STONE));
+  }
+
+  @Test
+  void stateTagPropertiesAreValidatedAgainstResolvedMembers() {
+    var logs = ResourceId.parse("minecraft:logs");
+    var empty = ResourceId.parse("minecraft:empty");
+    Registry tagged =
+        new Registry() {
+          public Resolution resolve(SetType kind, ResourceId id) {
+            return REGISTRY.resolve(kind, id);
+          }
+
+          public Resolution resolveTag(SetType kind, ResourceId id) {
+            return id.equals(logs) || id.equals(empty) ? Resolution.FOUND : Resolution.MISSING;
+          }
+
+          public Set<ResourceId> tag(SetType kind, ResourceId id) {
+            return id.equals(logs) ? Set.of(STONE) : Set.of();
+          }
+
+          public Set<ResourceId> universe(SetType kind) {
+            return REGISTRY.universe(kind);
+          }
+
+          public Set<BlockState> states(ResourceId block) {
+            return REGISTRY.states(block);
+          }
+        };
+    var compiler = new Compiler(tagged);
+    assertThrows(
+        Syntax.Failure.class, () -> compiler.compile("s{#minecraft:logs[axis=x]}", SetType.STATE));
+    assertEquals(
+        SetType.STATE, compiler.compile("s{#minecraft:empty[axis=x]}", SetType.STATE).type());
+  }
+
+  @Test
+  void indexedLiteralsPreserveUnionAndStatePropertyFiltering() {
+    var x = new BlockState(STONE, Map.of("axis", "x"));
+    var y = new BlockState(STONE, Map.of("axis", "y"));
+    Registry registry =
+        new Registry() {
+          public Resolution resolve(SetType kind, ResourceId id) {
+            return Set.of(STONE, AIR).contains(id) ? Resolution.FOUND : Resolution.MISSING;
+          }
+
+          public Resolution resolveTag(SetType kind, ResourceId id) {
+            return id.equals(ResourceId.parse("test:blocks"))
+                ? Resolution.FOUND
+                : Resolution.MISSING;
+          }
+
+          public Set<ResourceId> tag(SetType kind, ResourceId id) {
+            return Set.of(STONE);
+          }
+
+          public Set<ResourceId> universe(SetType kind) {
+            return Set.of(STONE, AIR);
+          }
+
+          public Set<BlockState> states(ResourceId block) {
+            return block.equals(STONE) ? Set.of(x, y) : Set.of(new BlockState(AIR, Map.of()));
+          }
+        };
+    var compiler = new Compiler(registry);
+    var blocks = compiler.compile("b{#test:blocks,minecraft:air}", SetType.BLOCK);
+    assertEquals(Truth.TRUE, blocks.contains(FACTS, STONE));
+    assertEquals(Truth.TRUE, blocks.contains(FACTS, AIR));
+    var states = compiler.compile("s{#test:blocks[axis=x],minecraft:air}", SetType.STATE);
+    assertEquals(Truth.TRUE, states.contains(FACTS, x));
+    assertEquals(Truth.FALSE, states.contains(FACTS, y));
+    assertEquals(Truth.TRUE, states.contains(FACTS, new BlockState(AIR, Map.of())));
+    assertEquals(Truth.FALSE, states.contains(FACTS, new BlockState(AIR, Map.of("axis", "x"))));
   }
 }

@@ -10,7 +10,18 @@ import java.util.regex.Pattern;
 
 /** Minecraft-independent values and read-only facts shared by the DSL and planner. */
 public final class Model {
+  private static final Set<ResourceId> VANILLA_AIR =
+      Set.of(
+          ResourceId.parse("minecraft:air"),
+          ResourceId.parse("minecraft:cave_air"),
+          ResourceId.parse("minecraft:void_air"));
+
   private Model() {}
+
+  /** Recognizes the property-free states of the three vanilla air blocks. */
+  public static boolean isVanillaAir(BlockState state) {
+    return VANILLA_AIR.contains(state.block()) && state.properties().isEmpty();
+  }
 
   public enum SetType {
     POS,
@@ -31,12 +42,14 @@ public final class Model {
     }
 
     public Truth and(Truth other) {
+      Objects.requireNonNull(other, "other");
       return this == FALSE || other == FALSE
           ? FALSE
           : this == UNKNOWN || other == UNKNOWN ? UNKNOWN : TRUE;
     }
 
     public Truth or(Truth other) {
+      Objects.requireNonNull(other, "other");
       return this == TRUE || other == TRUE
           ? TRUE
           : this == UNKNOWN || other == UNKNOWN ? UNKNOWN : FALSE;
@@ -105,6 +118,7 @@ public final class Model {
     }
   }
 
+  /** Inclusive integer interval; a null endpoint is open, but both cannot be null. */
   public record IntRange(Integer min, Integer max) {
     public IntRange {
       if (min == null && max == null || min != null && max != null && min > max)
@@ -116,6 +130,7 @@ public final class Model {
     }
   }
 
+  /** Exact state, requested air, intentional omission or unavailable target data. */
   public sealed interface TargetCell
       permits TargetCell.Exact, TargetCell.Clear, TargetCell.DontCare, TargetCell.Unknown {
     record Exact(BlockState state) implements TargetCell {
@@ -155,7 +170,10 @@ public final class Model {
     Truth selection(String name, Position pos);
   }
 
-  /** Version-bound registry domain used to validate and enumerate symbolic set members. */
+  /**
+   * Version-bound registry domain used to validate and enumerate symbolic set members. POS has no
+   * registry domain; its predicates are evaluated against finite world bounds instead.
+   */
   public interface Registry {
     enum Resolution {
       FOUND,
@@ -172,7 +190,10 @@ public final class Model {
     /** Returns the members of a resolved tag. Rebind expressions after a registry reload. */
     Set<ResourceId> tag(SetType kind, ResourceId id);
 
-    /** Returns the finite domain used for registry set complement and enumeration. */
+    /**
+     * Returns the finite ID domain. For STATE this contains block IDs; {@link #states(ResourceId)}
+     * enumerates each block's legal states.
+     */
     Set<ResourceId> universe(SetType kind);
 
     /** Returns all legal states of a block in this registry version. */

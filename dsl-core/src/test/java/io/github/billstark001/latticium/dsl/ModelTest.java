@@ -30,4 +30,10 @@ class ModelTest {
             Map.of("shape", "straight", "facing", "north"));
     assertEquals("minecraft:oak_stairs[facing=north,shape=straight]", state.canonicalId());
   }
+
+  @Test
+  void threeValuedOperatorsRejectMissingOperands() {
+    assertThrows(NullPointerException.class, () -> Truth.TRUE.and(null));
+    assertThrows(NullPointerException.class, () -> Truth.FALSE.or(null));
+  }
 }

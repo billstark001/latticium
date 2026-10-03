@@ -8,15 +8,40 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /** Binds symbolic expressions to a registry without retaining game objects. */
 public final class Compiler {
   private static final int DEFAULT_MAX_RADIUS = 32;
-  private static final int MAX_EXPANSION_DEPTH = 64;
+  static final int MAX_EXPANSION_DEPTH = 64;
   private static final int MAX_EXPANDED_NODES = 10_000;
 
-  private record ResolvedMember(Set<ResourceId> ids, Map<String, String> properties) {}
+  /** Maximum combined declarations and functions retained by one compiler. */
+  public static final int MAX_TOP_LEVEL_BINDINGS = 10_000;
+
+  private static final Facts UNAVAILABLE_FACTS =
+      new Facts() {
+        public Optional<WorldCell> world(Position pos) {
+          return Optional.empty();
+        }
+
+        public TargetCell target(Position pos) {
+          return new TargetCell.Unknown("Target unavailable");
+        }
+
+        public Optional<Position> player() {
+          return Optional.empty();
+        }
+
+        public Optional<Set<ResourceId>> inventory() {
+          return Optional.empty();
+        }
+
+        public Truth selection(String name, Position pos) {
+          return Truth.UNKNOWN;
+        }
+      };
 
   @FunctionalInterface
   public interface Membership {
@@ -24,15 +49,24 @@ public final class Compiler {
   }
 
   public record Bound(SetType type, Membership membership, int radius) {
+    public Bound {
+      java.util.Objects.requireNonNull(type, "type");
+      java.util.Objects.requireNonNull(membership, "membership");
+      if (radius < 0) throw new IllegalArgumentException("Negative read radius");
+    }
+
     /** Evaluates a position predicate; unavailable captured facts remain {@link Truth#UNKNOWN}. */
     public Truth at(Facts facts, Position pos) {
       if (type != SetType.POS) throw new IllegalStateException("Not PosSet");
-      return membership.test(facts, pos, null);
+      return membership.test(facts, java.util.Objects.requireNonNull(pos, "pos"), null);
     }
 
     /** Tests a registry element; position predicates must use {@link #at(Facts, Position)}. */
     public Truth contains(Facts facts, Object element) {
       if (type == SetType.POS) throw new IllegalStateException("PosSet needs a position");
+      if (type == SetType.STATE
+          ? !(element instanceof BlockState)
+          : !(element instanceof ResourceId)) return Truth.FALSE;
       return membership.test(facts, null, element);
     }
   }
@@ -46,6 +80,9 @@ public final class Compiler {
 
     Membership bind(List<Bound> arguments);
   }
+
+  private record RegisteredPrimitive(
+      List<SetType> parameters, SetType result, int radius, Primitive implementation) {}
 
   private static final Set<String> BUILTINS =
       Set.of(
@@ -78,7 +115,7 @@ public final class Compiler {
   private final Registry registry;
   private final Map<String, Bound> declarations = new HashMap<>();
   private final Map<String, Function> functions = new HashMap<>();
-  private final Map<String, Primitive> primitives = new HashMap<>();
+  private final Map<String, RegisteredPrimitive> primitives = new HashMap<>();
   private final Set<String> active = new HashSet<>();
   private final int maxRadius;
   private boolean targetAvailable;
@@ -90,19 +127,28 @@ public final class Compiler {
   }
 
   private static final class SymbolicRegistry implements Registry {
+    private static void requireRegistryKind(SetType kind) {
+      if (kind == null || kind == SetType.POS)
+        throw new IllegalArgumentException("Position sets have no registry domain");
+    }
+
     public Resolution resolve(SetType kind, ResourceId id) {
+      requireRegistryKind(kind);
       return Resolution.FOUND;
     }
 
     public Resolution resolveTag(SetType kind, ResourceId id) {
+      requireRegistryKind(kind);
       return Resolution.FOUND;
     }
 
     public Set<ResourceId> tag(SetType kind, ResourceId id) {
+      requireRegistryKind(kind);
       return Set.of();
     }
 
     public Set<ResourceId> universe(SetType kind) {
+      requireRegistryKind(kind);
       return Set.of();
     }
 
@@ -121,14 +167,30 @@ public final class Compiler {
     this.maxRadius = maxRadius;
   }
 
+  /** Copies bindings and primitive signatures into an independent namespace. */
+  public Compiler fork() {
+    var copy = new Compiler(registry, maxRadius);
+    copy.declarations.putAll(declarations);
+    copy.functions.putAll(functions);
+    copy.primitives.putAll(primitives);
+    copy.targetAvailable = targetAvailable;
+    return copy;
+  }
+
   /** Registers a trusted, read-only primitive before binding expressions that call it. */
   public Compiler registerPrimitive(String name, Primitive primitive) {
     java.util.Objects.requireNonNull(primitive);
-    if (primitive.radius() < 0 || primitive.radius() > maxRadius)
+    var parameters = List.copyOf(primitive.parameters());
+    var result = java.util.Objects.requireNonNull(primitive.result(), "primitive result");
+    int radius = primitive.radius();
+    if (radius < 0 || radius > maxRadius)
       throw new IllegalArgumentException("Invalid primitive radius");
+    var registered = new RegisteredPrimitive(parameters, result, radius, primitive);
     if (!name.matches("[A-Za-z_][A-Za-z0-9_]*")
         || BUILTINS.contains(name)
-        || primitives.putIfAbsent(name, primitive) != null)
+        || declarations.containsKey(name)
+        || functions.containsKey(name)
+        || primitives.putIfAbsent(name, registered) != null)
       throw new IllegalArgumentException("Duplicate or reserved primitive: " + name);
     return this;
   }
@@ -144,14 +206,32 @@ public final class Compiler {
     return targetAvailable;
   }
 
+  /** Tests a registry member with all dynamic facts unavailable; FALSE is a definite exclusion. */
+  public Truth membershipWithoutFacts(Bound bound, ResourceId member) {
+    if (registry instanceof SymbolicRegistry) return Truth.UNKNOWN;
+    return bound.contains(UNAVAILABLE_FACTS, member);
+  }
+
   /** Binds one expression against this compiler's declarations and registry. */
   public Bound compile(String source, SetType expected) {
+    return compile(Parser.expression(source), expected);
+  }
+
+  /** Binds a previously parsed expression without reparsing its source. */
+  public Bound compile(Expr expression, SetType expected) {
     nodes = 0;
-    return bind(Parser.expression(source), expected, Map.of(), 0);
+    return bind(expression, expected, Map.of(), 0);
   }
 
   /** Adds a document atomically; a failed bind leaves prior declarations and functions intact. */
   public List<Bound> compile(Document doc) {
+    long totalBindings =
+        (long) declarations.size()
+            + functions.size()
+            + doc.declarations().size()
+            + doc.functions().size();
+    if (totalBindings > MAX_TOP_LEVEL_BINDINGS)
+      throw new IllegalArgumentException("Top-level binding budget exceeded");
     nodes = 0;
     var previousDeclarations = new HashMap<>(declarations);
     var previousFunctions = new HashMap<>(functions);
@@ -167,14 +247,17 @@ public final class Compiler {
             || functions.putIfAbsent(fn.name(), fn) != null)
           throw new Failure("Duplicate or reserved function", fn.span());
       }
-      validateFunctionCycles();
+      ExpressionAnalysis.validateFunctionCycles(functions);
       for (var d : doc.declarations()) {
         if (declarations.containsKey(d.name())
             || functions.containsKey(d.name())
             || BUILTINS.contains(d.name())
             || primitives.containsKey(d.name())) throw new Failure("Duplicate name", d.span());
+        if (d.type() == null && ExpressionAnalysis.hasUncontextualizedAtom(d.expression()))
+          throw new Failure("Position atom needs an explicit PosSet declaration", d.span());
         declarations.put(d.name(), bind(d.expression(), d.type(), Map.of(), 0));
       }
+      validateFunctions(doc.functions());
       var results = new ArrayList<Bound>();
       for (var t : doc.terminals()) {
         var b = bind(t.expression(), null, Map.of(), 0);
@@ -237,7 +320,7 @@ public final class Compiler {
               0);
     } else if (e instanceof Binary b) {
       Bound left, right;
-      if (expected == null && b.left() instanceof Literal l && l.type() == null) {
+      if (expected == null && ExpressionAnalysis.needsTypeFromRight(b.left())) {
         right = bind(b.right(), null, locals, depth + 1);
         left = bind(b.left(), right.type(), locals, depth + 1);
       } else {
@@ -291,53 +374,7 @@ public final class Compiler {
   }
 
   private Bound literal(Literal l, SetType expected) {
-    SetType type = l.type() == null ? expected : l.type();
-    if (type == null || type == SetType.POS)
-      throw new Failure("Literal needs a registry set type", l.span());
-    if (expected != null && type != expected)
-      throw new Failure("Expected " + expected + ", got " + type, l.span());
-    var resolved = new ArrayList<ResolvedMember>();
-    for (var member : l.members()) {
-      if (type != SetType.STATE && !member.properties().isEmpty())
-        throw new Failure("Properties require StateSet", member.span());
-      var status =
-          member.tag()
-              ? registry.resolveTag(type, member.id())
-              : registry.resolve(type == SetType.STATE ? SetType.BLOCK : type, member.id());
-      if (status != Registry.Resolution.FOUND)
-        throw new Failure(status + " ID/tag: " + member.id(), member.span());
-      if (!(registry instanceof SymbolicRegistry)
-          && type == SetType.STATE
-          && !member.tag()
-          && !member.properties().isEmpty()
-          && registry.states(member.id()).stream()
-              .noneMatch(s -> matches(s.properties(), member.properties())))
-        throw new Failure("Invalid state properties", member.span());
-      resolved.add(
-          new ResolvedMember(
-              member.tag() ? Set.copyOf(registry.tag(type, member.id())) : Set.of(member.id()),
-              Map.copyOf(member.properties())));
-    }
-    return new Bound(
-        type,
-        (f, p, v) -> {
-          for (var member : resolved) {
-            if (type == SetType.STATE && v instanceof BlockState state) {
-              if (member.ids().contains(state.block())
-                  && matches(state.properties(), member.properties())) return Truth.TRUE;
-            } else if (type != SetType.STATE
-                && v instanceof ResourceId id
-                && member.ids().contains(id)) return Truth.TRUE;
-          }
-          return Truth.FALSE;
-        },
-        0);
-  }
-
-  private static boolean matches(Map<String, String> actual, Map<String, String> wanted) {
-    for (var entry : wanted.entrySet())
-      if (!entry.getValue().equals(actual.get(entry.getKey()))) return false;
-    return true;
+    return LiteralCompiler.bind(l, expected, registry, registry instanceof SymbolicRegistry);
   }
 
   private Bound call(Call c, Map<String, Bound> locals, int depth) {
@@ -357,7 +394,8 @@ public final class Compiler {
             integers.put(p.name(), a.get(i));
           } else env.put(p.name(), bind(a.get(i), p.type(), locals, depth + 1));
         }
-        return bind(substitute(fn.body(), integers), fn.result(), env, depth + 1);
+        return bind(
+            ExpressionAnalysis.substitute(fn.body(), integers), fn.result(), env, depth + 1);
       } finally {
         active.remove(n);
       }
@@ -371,6 +409,14 @@ public final class Compiler {
 
   Registry registry() {
     return registry;
+  }
+
+  boolean legalState(BlockState state) {
+    return registry instanceof SymbolicRegistry || registry.states(state.block()).contains(state);
+  }
+
+  boolean symbolicRegistry() {
+    return registry instanceof SymbolicRegistry;
   }
 
   int maxRadius() {
@@ -390,45 +436,31 @@ public final class Compiler {
       if (combined > maxRadius) throw new Failure("Read radius exceeds budget", c.span());
       radius = Math.max(radius, (int) combined);
     }
-    return new Bound(primitive.result(), primitive.bind(List.copyOf(arguments)), radius);
+    return new Bound(
+        primitive.result(), primitive.implementation().bind(List.copyOf(arguments)), radius);
   }
 
-  private static Expr substitute(Expr expression, Map<String, Expr> integers) {
-    if (integers.isEmpty()) return expression;
-    if (expression instanceof Name n) return integers.getOrDefault(n.value(), n);
-    if (expression instanceof Binary b)
-      return new Binary(
-          b.operator(), substitute(b.left(), integers), substitute(b.right(), integers), b.span());
-    if (expression instanceof Negate n)
-      return new Negate(substitute(n.inner(), integers), n.span());
-    if (expression instanceof Call c)
-      return new Call(
-          c.name(), c.args().stream().map(e -> substitute(e, integers)).toList(), c.span());
-    return expression;
-  }
-
-  private void validateFunctionCycles() {
-    var complete = new HashSet<String>();
-    var visiting = new HashSet<String>();
-    for (var name : functions.keySet()) visitFunction(name, visiting, complete);
-  }
-
-  private void visitFunction(String name, Set<String> visiting, Set<String> complete) {
-    if (complete.contains(name)) return;
-    var function = functions.get(name);
-    if (!visiting.add(name)) throw new Failure("Recursive function: " + name, function.span());
-    visitCalls(function.body(), visiting, complete);
-    visiting.remove(name);
-    complete.add(name);
-  }
-
-  private void visitCalls(Expr expression, Set<String> visiting, Set<String> complete) {
-    if (expression instanceof Call call) {
-      if (functions.containsKey(call.name())) visitFunction(call.name(), visiting, complete);
-      for (var argument : call.args()) visitCalls(argument, visiting, complete);
-    } else if (expression instanceof Binary binary) {
-      visitCalls(binary.left(), visiting, complete);
-      visitCalls(binary.right(), visiting, complete);
-    } else if (expression instanceof Negate negate) visitCalls(negate.inner(), visiting, complete);
+  private void validateFunctions(List<Function> added) {
+    boolean previousTargetAvailability = targetAvailable;
+    try {
+      // A definition may be used later in a target-aware phase. Type-check its body now,
+      // then enforce phase access again when a call is bound.
+      targetAvailable = true;
+      for (var function : added) {
+        var locals = new HashMap<String, Bound>();
+        var integers = new HashMap<String, Expr>();
+        for (var parameter : function.parameters()) {
+          if (parameter.integer()) integers.put(parameter.name(), new Name("0", function.span()));
+          else
+            locals.put(
+                parameter.name(),
+                new Bound(parameter.type(), (facts, pos, element) -> Truth.UNKNOWN, 0));
+        }
+        bind(
+            ExpressionAnalysis.substitute(function.body(), integers), function.result(), locals, 0);
+      }
+    } finally {
+      targetAvailable = previousTargetAvailability;
+    }
   }
 }
