@@ -1,4 +1,5 @@
 plugins { `java-library` }
+
 dependencies {
     api(project(":dsl-core"))
     implementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
@@ -12,6 +13,9 @@ tasks.register<Test>("officialTest") {
     testClassesDirs = sourceSets.test.get().output.classesDirs
     classpath = sourceSets.test.get().runtimeClasspath
     useJUnitPlatform { includeTags("official") }
-    systemProperty("latticium.officialRoot", rootProject.file(".tmp/minecraft-official").absolutePath)
+    systemProperty(
+        "latticium.officialRoot",
+        rootProject.file(".tmp/minecraft-official").absolutePath,
+    )
     shouldRunAfter(tasks.test)
 }
