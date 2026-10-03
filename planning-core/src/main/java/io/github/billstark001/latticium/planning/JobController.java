@@ -1,5 +1,7 @@
 package io.github.billstark001.latticium.planning;
 
+import static io.github.billstark001.latticium.dsl.Model.isVanillaAir;
+
 import io.github.billstark001.latticium.dsl.Model.*;
 import java.util.List;
 import java.util.Objects;
@@ -41,6 +43,31 @@ public final class JobController {
     this.initial = Objects.requireNonNull(plan.initial());
     this.steps = plan.steps();
     if (steps.isEmpty()) throw new IllegalArgumentException("Empty action plan");
+    if (reaches(initial, target))
+      throw new IllegalArgumentException("Action plan starts at its target");
+    BlockState before = initial;
+    for (int i = 0; i < steps.size(); i++) {
+      var step = steps.get(i);
+      if (step.result().equals(before))
+        throw new IllegalArgumentException("Action plan contains an unchanged state");
+      if (i < steps.size() - 1 && reaches(step.result(), target))
+        throw new IllegalArgumentException("Action plan continues after reaching its target");
+      before = step.result();
+    }
+    if (!reaches(steps.getLast().result(), target))
+      throw new IllegalArgumentException("Action plan does not reach its target");
+    long actions = 0;
+    for (var step : steps) actions += step.cost().actions();
+    if (actions > policy.maxActionsPerActivation())
+      throw new IllegalArgumentException("Action plan exceeds activation budget");
+  }
+
+  private static boolean reaches(BlockState state, TargetCell target) {
+    return switch (target) {
+      case TargetCell.Exact exact -> exact.state().equals(state);
+      case TargetCell.Clear ignored -> isVanillaAir(state);
+      default -> false;
+    };
   }
 
   public Status status() {
@@ -55,16 +82,19 @@ public final class JobController {
     return next;
   }
 
+  /** Pauses before the next submission; an accepted action still waits for observation. */
   public void pause() {
     if (status == Status.READY) status = Status.PAUSED;
     else if (status == Status.WAITING) pauseRequested = true;
   }
 
+  /** Clears a pending pause and permits the next submission after observation. */
   public void resume() {
     pauseRequested = false;
     if (status == Status.PAUSED) status = Status.READY;
   }
 
+  /** Cancels future submissions while allowing an accepted action to settle. */
   public void cancel() {
     if (status != Status.COMPLETE) {
       cancelRequested = true;
@@ -73,6 +103,7 @@ public final class JobController {
     }
   }
 
+  /** Invalidates the session immediately, discarding any outstanding receipt. */
   public void leaveWorld() {
     if (status != Status.COMPLETE) {
       status = Status.CANCELLED;
@@ -100,6 +131,11 @@ public final class JobController {
       return;
     }
     var step = steps.get(next);
+    if (!step.affectsOnly(position)) {
+      status = Status.BLOCKED;
+      reason = "Step effects exceed the single-cell job";
+      return;
+    }
     if (step.action() == Planner.Action.BREAK
         && policy.breakMode() == Profile.Policy.BreakMode.DENY) {
       status = Status.BLOCKED;
@@ -119,6 +155,7 @@ public final class JobController {
       }
       receipt = accepted.receipt();
       status = Status.WAITING;
+      reason = "";
     } else if (submission instanceof Host.Submission.Stale stale) {
       status = Status.BLOCKED;
       reason = stale.reason();
