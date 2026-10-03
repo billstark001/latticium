@@ -1,14 +1,11 @@
 package io.github.billstark001.latticium.planning.offline;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.github.billstark001.latticium.dsl.Model.BlockState;
 import io.github.billstark001.latticium.dsl.Model.Registry;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
 import io.github.billstark001.latticium.dsl.Model.SetType;
+import io.github.billstark001.latticium.planning.StrictJson;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.EnumMap;
@@ -19,6 +16,8 @@ import java.util.Set;
 
 /** Read-only catalog baked from Mojang's data reports; never needs game classes. */
 public final class ReportRegistry implements Registry {
+  private static final int SCHEMA_VERSION = 1;
+
   private final String version;
   private final Map<SetType, Set<ResourceId>> universes = new EnumMap<>(SetType.class);
   private final Map<SetType, Map<ResourceId, Set<ResourceId>>> tags = new EnumMap<>(SetType.class);
@@ -29,7 +28,7 @@ public final class ReportRegistry implements Registry {
     object(root, "catalog");
     if (!root.path("schema").isIntegralNumber()
         || !root.path("schema").canConvertToInt()
-        || root.path("schema").intValue() != 1)
+        || root.path("schema").intValue() != SCHEMA_VERSION)
       throw new IllegalArgumentException("Unsupported catalog schema");
     version = text(root.get("version"), "version");
     if (version.isBlank()) throw new IllegalArgumentException("Empty catalog version");
@@ -47,24 +46,18 @@ public final class ReportRegistry implements Registry {
                 SetType.FLUID,
                 "fluid")
             .entrySet()) {
-      var ids = new HashSet<ResourceId>();
-      var universe = array(universeData.get(type.getValue()), "universes/" + type.getValue());
-      universe.forEach(value -> ids.add(ResourceId.parse(text(value, "universe ID"))));
-      if (ids.size() != universe.size())
-        throw new IllegalArgumentException("Duplicate universe ID: " + type.getValue());
-      universes.put(type.getKey(), Set.copyOf(ids));
+      var ids = resourceIds(universeData.get(type.getValue()), "universes/" + type.getValue());
+      universes.put(type.getKey(), ids);
       var group = new HashMap<ResourceId, Set<ResourceId>>();
       object(tagData.get(type.getValue()), "tags/" + type.getValue())
           .properties()
           .forEach(
               entry -> {
-                var members = new HashSet<ResourceId>();
-                array(entry.getValue(), "tag " + entry.getKey())
-                    .forEach(value -> members.add(ResourceId.parse(text(value, "tag member"))));
+                var members = resourceIds(entry.getValue(), "tag " + entry.getKey());
                 if (!ids.containsAll(members))
                   throw new IllegalArgumentException(
                       "Tag references unknown ID: " + entry.getKey());
-                group.put(ResourceId.parse(entry.getKey()), Set.copyOf(members));
+                group.put(ResourceId.parse(entry.getKey()), members);
               });
       tags.put(type.getKey(), Map.copyOf(group));
     }
@@ -81,10 +74,9 @@ public final class ReportRegistry implements Registry {
                   .properties()
                   .forEach(
                       property -> {
-                        var values = new HashSet<String>();
-                        array(property.getValue(), "property " + property.getKey())
-                            .forEach(value -> values.add(text(value, "property value")));
-                        schema.put(property.getKey(), Set.copyOf(values));
+                        schema.put(
+                            property.getKey(),
+                            strings(property.getValue(), "property " + property.getKey()));
                       });
               properties.put(block, Map.copyOf(schema));
               var legal = new HashSet<BlockState>();
@@ -103,7 +95,8 @@ public final class ReportRegistry implements Registry {
                             || values.entrySet().stream()
                                 .anyMatch(e -> !schema.get(e.getKey()).contains(e.getValue())))
                           throw new IllegalArgumentException("Illegal state for " + block);
-                        legal.add(new BlockState(block, values));
+                        if (!legal.add(new BlockState(block, values)))
+                          throw new IllegalArgumentException("Duplicate state for " + block);
                       });
               if (legal.isEmpty()) throw new IllegalArgumentException("No states for " + block);
               states.put(block, Set.copyOf(legal));
@@ -130,40 +123,69 @@ public final class ReportRegistry implements Registry {
     return node.asText();
   }
 
-  public static ReportRegistry load(Path path) throws IOException {
-    var mapper =
-        JsonMapper.builder(
-                JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-            .build();
-    return new ReportRegistry(mapper.readTree(path.toFile()));
+  private static Set<ResourceId> resourceIds(JsonNode node, String name) {
+    var ids = new HashSet<ResourceId>();
+    array(node, name)
+        .forEach(
+            value -> {
+              if (!ids.add(ResourceId.parse(text(value, name))))
+                throw new IllegalArgumentException("Duplicate ID in " + name);
+            });
+    return Set.copyOf(ids);
   }
 
+  private static Set<String> strings(JsonNode node, String name) {
+    var values = new HashSet<String>();
+    array(node, name)
+        .forEach(
+            value -> {
+              if (!values.add(text(value, name)))
+                throw new IllegalArgumentException("Duplicate value in " + name);
+            });
+    return Set.copyOf(values);
+  }
+
+  /** Reads one strict catalog emitted by the offline baker. */
+  public static ReportRegistry load(Path path) throws IOException {
+    return new ReportRegistry(StrictJson.parse(path));
+  }
+
+  /** Minecraft version recorded in this catalog. */
   public String version() {
     return version;
   }
 
+  /** Legal property values for a block, or an empty map when it is absent. */
   public Map<String, Set<String>> stateSchema(ResourceId block) {
     return properties.getOrDefault(block, Map.of());
   }
 
+  private static void requireRegistryKind(SetType kind) {
+    if (kind == null || kind == SetType.POS)
+      throw new IllegalArgumentException("Position sets have no registry domain");
+  }
+
   @Override
   public Resolution resolve(SetType kind, ResourceId id) {
+    requireRegistryKind(kind);
     return universes.get(kind).contains(id) ? Resolution.FOUND : Resolution.MISSING;
   }
 
   @Override
   public Resolution resolveTag(SetType kind, ResourceId id) {
+    requireRegistryKind(kind);
     return tags.get(kind).containsKey(id) ? Resolution.FOUND : Resolution.MISSING;
   }
 
   @Override
   public Set<ResourceId> tag(SetType kind, ResourceId id) {
+    requireRegistryKind(kind);
     return tags.get(kind).getOrDefault(id, Set.of());
   }
 
   @Override
   public Set<ResourceId> universe(SetType kind) {
+    requireRegistryKind(kind);
     return universes.get(kind);
   }
 

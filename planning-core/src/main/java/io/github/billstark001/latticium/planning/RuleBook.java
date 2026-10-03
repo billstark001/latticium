@@ -1,10 +1,6 @@
 package io.github.billstark001.latticium.planning;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
@@ -15,16 +11,17 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /** Declarative, exact-state offline rules. Native placement behavior remains an oracle. */
 public final class RuleBook {
-  private static final JsonMapper MAPPER =
-      JsonMapper.builder(
-              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-          .build();
+  private static final int SCHEMA_VERSION = 1;
 
+  /**
+   * Exact transition; {@code when} and {@code requires} inspect the prior state, {@code verify} the
+   * predicted result.
+   */
   public record Rule(
       ResourceId id,
       BlockState before,
@@ -51,6 +48,7 @@ public final class RuleBook {
     return rules;
   }
 
+  /** Parses a rule bundle without exact-state registry validation. */
   public static RuleBook parse(String json, Compiler compiler) {
     return parse(json, compiler, null);
   }
@@ -59,12 +57,12 @@ public final class RuleBook {
   public static RuleBook parse(String json, Compiler compiler, Registry registry) {
     boolean previousTargetAvailability = compiler.targetAvailable();
     try {
-      var root = object(MAPPER.readTree(json), "");
+      var root = object(StrictJson.parse(json), "");
       keys(root, "", "schema", "rules");
       if (!root.path("schema").isIntegralNumber()
           || !root.path("schema").canConvertToInt()
-          || root.path("schema").intValue() != 1)
-        throw new IllegalArgumentException("/schema: expected 1");
+          || root.path("schema").intValue() != SCHEMA_VERSION)
+        throw new IllegalArgumentException("/schema: expected " + SCHEMA_VERSION);
       var array = root.get("rules");
       if (array == null || !array.isArray())
         throw new IllegalArgumentException("/rules: expected array");
@@ -76,10 +74,12 @@ public final class RuleBook {
         String path = "/rules/" + index++;
         var o = object(raw, path);
         keys(o, path, "id", "before", "after", "action", "when", "requires", "verify", "cost");
-        var id = ResourceId.parse(string(o, "id", path));
+        var id = resourceId(string(o, "id", path), path + "/id");
         if (!ids.add(id)) throw new IllegalArgumentException(path + ": duplicate rule ID");
         var before = state(o.get("before"), path + "/before");
         var after = state(o.get("after"), path + "/after");
+        if (before.equals(after))
+          throw new IllegalArgumentException(path + "/after: transition leaves state unchanged");
         if (registry != null) {
           if (!registry.states(before.block()).contains(before))
             throw new IllegalArgumentException(path + "/before: illegal state for registry");
@@ -87,16 +87,16 @@ public final class RuleBook {
             throw new IllegalArgumentException(path + "/after: illegal state for registry");
         }
         Planner.Action action;
+        String actionName = string(o, "action", path);
         try {
-          action = Planner.Action.valueOf(string(o, "action", path).toUpperCase(Locale.ROOT));
+          action = Planner.Action.valueOf(actionName.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ex) {
           throw new IllegalArgumentException(path + "/action: invalid action");
         }
         Compiler.Bound when = guard(o, "when", compiler, path),
             requires = guard(o, "requires", compiler, path),
             verify = guard(o, "verify", compiler, path);
-        var cost =
-            o.has("cost") ? object(o.get("cost"), path + "/cost") : MAPPER.createObjectNode();
+        var cost = o.has("cost") ? object(o.get("cost"), path + "/cost") : StrictJson.emptyObject();
         keys(cost, path + "/cost", "materials", "risk");
         int
             materials =
@@ -116,7 +116,7 @@ public final class RuleBook {
       }
       return new RuleBook(rules);
     } catch (IOException ex) {
-      throw new IllegalArgumentException("Invalid rule JSON", ex);
+      throw new IllegalArgumentException("Invalid rule JSON: " + ex.getMessage(), ex);
     } finally {
       compiler.targetAvailable(previousTargetAvailability);
     }
@@ -133,6 +133,7 @@ public final class RuleBook {
       boolean unknown = false;
       for (var rule : matching) {
         Truth when = rule.when() == null ? Truth.TRUE : rule.when().at(before, pos);
+        if (when == Truth.FALSE) continue;
         Truth requires = rule.requires() == null ? Truth.TRUE : rule.requires().at(before, pos);
         Truth allowed = when.and(requires);
         if (allowed == Truth.UNKNOWN) {
@@ -161,24 +162,45 @@ public final class RuleBook {
 
   private static Facts overlay(Facts source, Position at, BlockState state, TargetCell target) {
     return new Facts() {
-      public java.util.Optional<WorldCell> world(Position p) {
-        if (!p.equals(at)) return source.world(p);
-        var original = source.world(p);
-        return java.util.Optional.of(
-            original
-                .map(w -> new WorldCell(state, w.biome(), w.fluid(), w.light(), w.solid()))
-                .orElse(new WorldCell(state, null, null, null, null)));
+      private Optional<WorldCell> originalAt;
+      private Boolean changed;
+
+      private Optional<WorldCell> originalAt() {
+        if (originalAt == null) originalAt = source.world(at);
+        return originalAt;
+      }
+
+      private boolean speculative() {
+        if (changed == null) {
+          var original = originalAt();
+          changed = original.isEmpty() || !state.equals(original.get().state());
+        }
+        return changed;
+      }
+
+      public Optional<WorldCell> world(Position p) {
+        if (!p.equals(at)) {
+          var neighbor = source.world(p);
+          if (!faceNeighbor(at, p) || !speculative()) return neighbor;
+          return neighbor.map(cell -> new WorldCell(cell.state(), cell.biome(), null, null, null));
+        }
+        var original = originalAt();
+        if (!speculative()) return original;
+        // Fluid, light and solidity can change with the block or its neighbors. A speculative
+        // transition only establishes the block state; keep the independent biome fact.
+        return Optional.of(
+            new WorldCell(state, original.map(WorldCell::biome).orElse(null), null, null, null));
       }
 
       public TargetCell target(Position p) {
         return p.equals(at) ? target : source.target(p);
       }
 
-      public java.util.Optional<Position> player() {
+      public Optional<Position> player() {
         return source.player();
       }
 
-      public java.util.Optional<Set<ResourceId>> inventory() {
+      public Optional<Set<ResourceId>> inventory() {
         return source.inventory();
       }
 
@@ -186,6 +208,15 @@ public final class RuleBook {
         return source.selection(name, p);
       }
     };
+  }
+
+  private static boolean faceNeighbor(Position a, Position b) {
+    if (!a.dimension().equals(b.dimension())) return false;
+    long distance =
+        Math.abs((long) a.x() - b.x())
+            + Math.abs((long) a.y() - b.y())
+            + Math.abs((long) a.z() - b.z());
+    return distance == 1;
   }
 
   private static Compiler.Bound guard(ObjectNode n, String key, Compiler compiler, String path) {
@@ -200,8 +231,8 @@ public final class RuleBook {
   private static BlockState state(JsonNode n, String path) {
     var o = object(n, path);
     keys(o, path, "block", "properties");
-    var id = ResourceId.parse(string(o, "block", path));
-    var properties = new java.util.HashMap<String, String>();
+    var id = resourceId(string(o, "block", path), path + "/block");
+    var properties = new HashMap<String, String>();
     if (o.has("properties")) {
       var p = object(o.get("properties"), path + "/properties");
       p.properties()
@@ -227,6 +258,14 @@ public final class RuleBook {
     if (value == null || !value.isTextual())
       throw new IllegalArgumentException(path + "/" + key + ": expected string");
     return value.asText();
+  }
+
+  private static ResourceId resourceId(String raw, String path) {
+    try {
+      return ResourceId.parse(raw);
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException(path + ": " + ex.getMessage(), ex);
+    }
   }
 
   private static int positiveOrZero(ObjectNode n, String key, String path, int fallback) {

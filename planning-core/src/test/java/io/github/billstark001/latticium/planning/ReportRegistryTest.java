@@ -3,6 +3,8 @@ package io.github.billstark001.latticium.planning;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.core.JsonParseException;
+import io.github.billstark001.latticium.dsl.Model.ResourceId;
+import io.github.billstark001.latticium.dsl.Model.SetType;
 import io.github.billstark001.latticium.planning.offline.ReportRegistry;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -28,7 +30,11 @@ class ReportRegistryTest {
         "item":[],"fluid":[],"biome":[]},"tags":{"block":{},"item":{},"fluid":{},"biome":{}},
         "blocks":{"minecraft:stone":{"properties":{},"states":[{}]}}}
         """;
-    assertDoesNotThrow(() -> load(valid));
+    var registry = assertDoesNotThrow(() -> load(valid));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> registry.resolve(SetType.POS, ResourceId.parse("minecraft:stone")));
+    assertThrows(IllegalArgumentException.class, () -> registry.universe(SetType.POS));
     assertThrows(
         IllegalArgumentException.class,
         () -> load(valid.replace("\"states\":[{}]", "\"states\":[{\"axis\":\"x\"}]")));
@@ -42,5 +48,22 @@ class ReportRegistryTest {
         JsonParseException.class,
         () -> load(valid.replace("\"schema\":1", "\"schema\":1,\"schema\":1")));
     assertThrows(IOException.class, () -> load(valid + "{}"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            load(
+                valid.replace(
+                    "\"block\":[\"minecraft:stone\"]",
+                    "\"block\":[\"minecraft:stone\",\"minecraft:stone\"]")));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> load(valid.replace("\"states\":[{}]", "\"states\":[{},{}]")));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            load(
+                valid.replace(
+                    "\"block\":{}",
+                    "\"block\":{\"minecraft:rocks\":[\"minecraft:stone\",\"minecraft:stone\"]}")));
   }
 }

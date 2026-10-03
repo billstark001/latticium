@@ -82,6 +82,10 @@ class OfficialDataTest {
       assertEquals(
           SetType.POS,
           c.compile("$#minecraft:is_nether & fluid(f{minecraft:lava})", SetType.POS).type());
+      assertEquals(SetType.STATE, c.compile("property_range(layers,1..3)", SetType.STATE).type());
+      assertThrows(
+          io.github.billstark001.latticium.dsl.Syntax.Failure.class,
+          () -> c.compile("property_range(axis,1..3)", SetType.STATE));
     }
   }
 
@@ -126,6 +130,30 @@ class OfficialDataTest {
                   valid.replace("\"layers\":\"2\"", "\"layers\":\"0\""),
                   new Compiler(registry),
                   registry));
+    }
+  }
+
+  @Test
+  void propertyFilteredLiteralsMatchSampledLegalStatesInBothVersions() throws Exception {
+    for (String version : new String[] {"26.2", "26.3"}) {
+      var registry = load(version);
+      var compiler = new Compiler(registry);
+      int checked = 0;
+      for (var block : registry.universe(SetType.BLOCK).stream().sorted().toList()) {
+        var schema = registry.stateSchema(block);
+        if (schema.isEmpty()) continue;
+        var property = schema.keySet().stream().sorted().findFirst().orElseThrow();
+        var value = schema.get(property).stream().sorted().findFirst().orElseThrow();
+        var bound =
+            compiler.compile("s{" + block + "[" + property + "=" + value + "]}", SetType.STATE);
+        for (var state : registry.states(block))
+          assertEquals(
+              state.properties().get(property).equals(value),
+              bound.contains(null, state) == Truth.TRUE,
+              state.canonicalId());
+        if (++checked == 32) break;
+      }
+      assertEquals(32, checked);
     }
   }
 }

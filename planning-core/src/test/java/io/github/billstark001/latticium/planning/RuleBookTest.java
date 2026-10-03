@@ -78,6 +78,22 @@ class RuleBookTest {
   }
 
   @Test
+  void unchangedStateCannotProduceAUsefulTransition() {
+    var error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                RuleBook.parse(
+                    """
+                    {"schema":1,"rules":[{"id":"latticium:no_op",
+                     "before":{"block":"minecraft:stone"},
+                     "after":{"block":"minecraft:stone"},"action":"interact"}]}
+                    """,
+                    Compiler.symbolic()));
+    assertTrue(error.getMessage().startsWith("/rules/0/after:"));
+  }
+
+  @Test
   void falseGuardDominatesUnknownRequirementAndBindingRestoresTargetPhase() {
     var compiler = Compiler.symbolic();
     var rules =
@@ -91,9 +107,11 @@ class RuleBookTest {
     assertThrows(Syntax.Failure.class, () -> compiler.compile("matches_target()", SetType.POS));
     var pos = new Position(ResourceId.parse("minecraft:overworld"), 0, 0, 0);
     var stone = new BlockState(ResourceId.parse("minecraft:stone"), Map.of());
+    int[] worldReads = {0};
     Facts facts =
         new Facts() {
           public Optional<WorldCell> world(Position p) {
+            worldReads[0]++;
             return Optional.empty();
           }
 
@@ -116,6 +134,7 @@ class RuleBookTest {
     assertInstanceOf(
         Planner.Prediction.NoLegalPlacement.class,
         rules.oracle(facts).predict(pos, stone, new TargetCell.Clear()));
+    assertEquals(0, worldReads[0]);
   }
 
   @Test
@@ -132,5 +151,125 @@ class RuleBookTest {
                  "after":{"block":"minecraft:air"},"action":"break","cost":{"risk":1.5}}]}
                 """,
                 Compiler.symbolic()));
+  }
+
+  @Test
+  void speculativeAfterStateDoesNotReuseOldWorldDerivedFacts() {
+    var rules =
+        RuleBook.parse(
+            """
+            {"schema":1,"rules":[{"id":"latticium:change","before":{"block":"minecraft:stone"},
+             "after":{"block":"minecraft:air"},"action":"break","verify":"solid()"}]}
+            """,
+            Compiler.symbolic());
+    var pos = new Position(ResourceId.parse("minecraft:overworld"), 0, 0, 0);
+    var stone = new BlockState(ResourceId.parse("minecraft:stone"), Map.of());
+    Facts facts =
+        new Facts() {
+          public Optional<WorldCell> world(Position p) {
+            return Optional.of(new WorldCell(stone, null, null, 0, true));
+          }
+
+          public TargetCell target(Position p) {
+            return new TargetCell.Clear();
+          }
+
+          public Optional<Position> player() {
+            return Optional.empty();
+          }
+
+          public Optional<Set<ResourceId>> inventory() {
+            return Optional.empty();
+          }
+
+          public Truth selection(String name, Position p) {
+            return Truth.FALSE;
+          }
+        };
+    assertInstanceOf(
+        Planner.Prediction.Unknown.class,
+        rules.oracle(facts).predict(pos, stone, new TargetCell.Clear()));
+  }
+
+  @Test
+  void invalidResourceIdsIdentifyTheirRuleField() {
+    String json =
+        """
+        {"schema":1,"rules":[{"id":"latticium:example",
+         "before":{"block":"minecraft:stone"},"after":{"block":"minecraft:air"},
+         "action":"break"}]}
+        """;
+    var badRule =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                RuleBook.parse(
+                    json.replace("latticium:example", "Bad:example"), Compiler.symbolic()));
+    assertTrue(badRule.getMessage().startsWith("/rules/0/id:"));
+    var badBlock =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                RuleBook.parse(json.replace("minecraft:stone", "Bad:stone"), Compiler.symbolic()));
+    assertTrue(badBlock.getMessage().startsWith("/rules/0/before/block:"));
+  }
+
+  @Test
+  void missingActionReportsItsRequiredField() {
+    var error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                RuleBook.parse(
+                    """
+                    {"schema":1,"rules":[{"id":"test:missing_action",
+                     "before":{"block":"minecraft:stone"},
+                     "after":{"block":"minecraft:air"}}]}
+                    """,
+                    Compiler.symbolic()));
+    assertTrue(error.getMessage().contains("/rules/0/action: expected string"));
+  }
+
+  @Test
+  void speculativeTransitionInvalidatesNeighborDerivedFacts() {
+    var rules =
+        RuleBook.parse(
+            """
+            {"schema":1,"rules":[{"id":"latticium:neighbor","before":{"block":"minecraft:stone"},
+             "after":{"block":"minecraft:air"},"action":"break",
+             "requires":"adjacent(light(0..15))","verify":"adjacent(light(0..15))"}]}
+            """,
+            Compiler.symbolic());
+    var pos = new Position(ResourceId.parse("minecraft:overworld"), 0, 0, 0);
+    var stone = new BlockState(ResourceId.parse("minecraft:stone"), Map.of());
+    var air = new BlockState(ResourceId.parse("minecraft:air"), Map.of());
+    Facts facts =
+        new Facts() {
+          public Optional<WorldCell> world(Position p) {
+            if (p.equals(pos)) return Optional.of(new WorldCell(stone, null, null, 0, true));
+            if (p.equals(pos.offset(1, 0, 0)))
+              return Optional.of(new WorldCell(stone, null, null, 0, true));
+            return Optional.empty();
+          }
+
+          public TargetCell target(Position p) {
+            return new TargetCell.Clear();
+          }
+
+          public Optional<Position> player() {
+            return Optional.empty();
+          }
+
+          public Optional<Set<ResourceId>> inventory() {
+            return Optional.empty();
+          }
+
+          public Truth selection(String name, Position p) {
+            return Truth.FALSE;
+          }
+        };
+    assertInstanceOf(
+        Planner.Prediction.Unknown.class,
+        rules.oracle(facts).predict(pos, stone, new TargetCell.Exact(air)));
   }
 }
