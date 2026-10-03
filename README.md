@@ -6,6 +6,8 @@ This repository is implementing the Minecraft-independent core of a client const
 
 Run `./gradlew test` with JDK 21 available as a Gradle toolchain. `dsl-core` and `planning-core` compile with `--release 21` and run their tests on Java 21. They have no Minecraft dependency.
 
+To validate with locally downloaded Mojang 26.2/26.3 data, follow [official data validation](docs/official-data-validation.md).
+
 ## Modules
 
 | Directory | Responsibility |
