@@ -81,6 +81,7 @@ class PlanningTest {
            "select":{"where":"rocks"},"target":{"items":"{minecraft:stone}"}}
           """);
     assertThrows(ProfileReader.Error.class, () -> reader.bind(profile, Compiler.symbolic()));
+    assertThrows(ProfileReader.Error.class, () -> reader.bind(profile, Compiler.symbolic(), null));
     ModuleLoader.Resolver good =
         id ->
             Optional.of(

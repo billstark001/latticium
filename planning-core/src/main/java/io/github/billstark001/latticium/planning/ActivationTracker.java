@@ -16,6 +16,9 @@ public final class ActivationTracker {
   private Truth previous;
   private boolean active;
 
+  /**
+   * Samples one capture; missing player or unknown membership defers without changing edge state.
+   */
   public Decision sample(Profile.Activation activation, Compiler.Bound where, Facts facts) {
     var player = facts.player();
     if (player.isEmpty()) return Decision.DEFER;
@@ -43,6 +46,7 @@ public final class ActivationTracker {
     return Decision.CONTINUE;
   }
 
+  /** Forgets the previous known sample and any active while-triggered job. */
   public void reset() {
     previous = null;
     active = false;

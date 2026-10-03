@@ -8,6 +8,7 @@ import io.github.billstark001.latticium.dsl.Model.SetType;
 import io.github.billstark001.latticium.dsl.Syntax;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 
 class ModuleLoaderTest {
@@ -44,5 +45,28 @@ class ModuleLoaderTest {
             compiler);
     loader.loadAll(List.of(BROKEN));
     assertEquals(SetType.POS, compiler.compile("derived", SetType.POS).type());
+  }
+
+  @Test
+  void wideImportGraphHasANodeBudget() {
+    var compiler = Compiler.symbolic();
+    var loader =
+        new ModuleLoader(id -> Optional.of(new ModuleLoader.Module("", List.of())), compiler);
+    var ids =
+        IntStream.range(0, 513)
+            .mapToObj(index -> ResourceId.parse("user:module_" + index))
+            .toList();
+    assertThrows(IllegalArgumentException.class, () -> loader.loadAll(ids));
+    loader.loadAll(ids.subList(0, 512));
+  }
+
+  @Test
+  void syntaxErrorsIdentifyTheImportedModule() {
+    var loader =
+        new ModuleLoader(
+            id -> Optional.of(new ModuleLoader.Module("broken: PosSet = ;", List.of())),
+            Compiler.symbolic());
+    var error = assertThrows(Syntax.Failure.class, () -> loader.loadAll(List.of(BROKEN)));
+    assertTrue(error.getMessage().contains(BROKEN.toString()));
   }
 }

@@ -1,15 +1,11 @@
 package io.github.billstark001.latticium.planning;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
 import io.github.billstark001.latticium.dsl.Model.SetType;
+import io.github.billstark001.latticium.dsl.Model.Truth;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -19,11 +15,10 @@ import java.util.Set;
 
 /** Strict schema reader. Errors include a JSON pointer; DSL errors preserve expression offsets. */
 public final class ProfileReader {
-  private final ObjectMapper mapper =
-      JsonMapper.builder(
-              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-          .build();
+  private static final int DEFAULT_ACTIONS_PER_TICK = 1;
+  private static final int DEFAULT_ACTIONS_PER_ACTIVATION = 256;
+  private static final Set<String> INITIAL_MODES = Set.of("ignore", "fire_if_inside");
+  private static final Set<String> FINITE_ROOTS = Set.of("box", "sphere", "selection");
 
   public static final class Error extends IllegalArgumentException {
     public Error(String pointer, String message) {
@@ -34,10 +29,12 @@ public final class ProfileReader {
   /** Reads schema-1 JSON, rejecting unknown and duplicate fields with pointer-based diagnostics. */
   public Profile read(String json) {
     try {
-      JsonNode root = mapper.readTree(json);
+      JsonNode root = StrictJson.parse(json);
       ObjectNode o = obj(root, "");
       keys(o, "", "schema", "id", "use", "activation", "scope", "select", "target", "policy");
-      if (integer(o, "/schema", "schema", -1) != 1) throw new Error("/schema", "Expected schema 1");
+      var schema = o.get("schema");
+      if (!isInt(schema) || schema.intValue() != Profile.SCHEMA_VERSION)
+        throw new Error("/schema", "Expected schema " + Profile.SCHEMA_VERSION);
       var id = id(string(o, "/id", "id"), "/id");
       var uses = new ArrayList<ResourceId>();
       var use = o.get("use");
@@ -60,7 +57,7 @@ public final class ProfileReader {
                 Profile.Activation.Mode.class,
                 "/activation/mode");
         var initial = optional(a, "initial", "ignore", "/activation/initial");
-        if (!List.of("ignore", "fire_if_inside").contains(initial))
+        if (!INITIAL_MODES.contains(initial))
           throw new Error("/activation/initial", "Invalid initial mode");
         activation =
             new Profile.Activation(
@@ -125,7 +122,7 @@ public final class ProfileReader {
                 t.has("using") ? string(t, "/target/using", "using") : null,
                 air != null && air.booleanValue());
       }
-      var po = o.has("policy") ? obj(o.get("policy"), "/policy") : mapper.createObjectNode();
+      var po = o.has("policy") ? obj(o.get("policy"), "/policy") : StrictJson.emptyObject();
       keys(po, "/policy", "break", "max_actions_per_tick", "max_actions_per_activation");
       var policy =
           new Profile.Policy(
@@ -133,9 +130,18 @@ public final class ProfileReader {
                   optional(po, "break", "deny", "/policy/break"),
                   Profile.Policy.BreakMode.class,
                   "/policy/break"),
-              integer(po, "/policy/max_actions_per_tick", "max_actions_per_tick", 1),
-              integer(po, "/policy/max_actions_per_activation", "max_actions_per_activation", 256));
-      return new Profile(1, id, List.copyOf(uses), activation, scope, select, target, policy);
+              positiveInteger(
+                  po,
+                  "/policy/max_actions_per_tick",
+                  "max_actions_per_tick",
+                  DEFAULT_ACTIONS_PER_TICK),
+              positiveInteger(
+                  po,
+                  "/policy/max_actions_per_activation",
+                  "max_actions_per_activation",
+                  DEFAULT_ACTIONS_PER_ACTIVATION));
+      return new Profile(
+          Profile.SCHEMA_VERSION, id, List.copyOf(uses), activation, scope, select, target, policy);
     } catch (IOException ex) {
       throw new Error("", ex.getMessage());
     }
@@ -144,21 +150,23 @@ public final class ProfileReader {
   /** Binds a profile without imports; use the resolver overload when {@code use} is present. */
   public Profile.Bound bind(Profile p, Compiler compiler) {
     if (!p.uses().isEmpty()) throw new Error("/use", "Module resolver required");
-    return bindLoaded(p, compiler);
+    return bindLoaded(p, compiler.fork());
   }
 
   /** Resolves declaration-only modules before binding phase-specific profile expressions. */
   public Profile.Bound bind(Profile p, Compiler compiler, ModuleLoader.Resolver modules) {
-    boolean previousTargetAvailability = compiler.targetAvailable();
+    if (modules == null && !p.uses().isEmpty()) throw new Error("/use", "Module resolver required");
+    Compiler isolated = compiler.fork();
+    boolean previousTargetAvailability = isolated.targetAvailable();
     try {
-      compiler.targetAvailable(false);
-      new ModuleLoader(modules, compiler).loadAll(p.uses());
+      isolated.targetAvailable(false);
+      new ModuleLoader(modules, isolated).loadAll(p.uses());
     } catch (IllegalArgumentException | io.github.billstark001.latticium.dsl.Syntax.Failure ex) {
       throw new Error("/use", ex.getMessage());
     } finally {
-      compiler.targetAvailable(previousTargetAvailability);
+      isolated.targetAvailable(previousTargetAvailability);
     }
-    return bindLoaded(p, compiler);
+    return bindLoaded(p, isolated);
   }
 
   private Profile.Bound bindLoaded(Profile p, Compiler compiler) {
@@ -170,24 +178,24 @@ public final class ProfileReader {
               ? null
               : at(
                   "/activation/where", () -> compiler.compile(p.activation().where(), SetType.POS));
-      var scope = at("/scope", () -> compiler.compile(p.scope(), SetType.POS));
       var parsed =
           at("/scope", () -> io.github.billstark001.latticium.dsl.Parser.expression(p.scope()));
+      var scope = at("/scope", () -> compiler.compile(parsed, SetType.POS));
       if (!finite(parsed))
         throw new Error(
             "/scope", "Scope must have finite enumerable bounds (box, sphere or selection)");
-      compiler.targetAvailable(p.target() instanceof Profile.Source);
+      compiler.targetAvailable(!(p.target() instanceof Profile.Items));
       var select = at("/select/where", () -> compiler.compile(p.select().where(), SetType.POS));
       Compiler.Bound items = null, states = null;
       if (p.target() instanceof Profile.Items t) {
         items = at("/target/items", () -> compiler.compile(t.expression(), SetType.ITEM));
         if (t.states() != null)
           states = at("/target/states", () -> compiler.compile(t.states(), SetType.STATE));
+        for (int i = 0; i < t.preferred().size(); i++)
+          if (compiler.membershipWithoutFacts(items, t.preferred().get(i)) == Truth.FALSE)
+            throw new Error("/target/choose/prefer/" + i, "Preferred item is outside target.items");
       } else if (p.target() instanceof Profile.Source t && t.using() != null)
         items = at("/target/using", () -> compiler.compile(t.using(), SetType.ITEM));
-      if (p.target() instanceof Profile.Clear
-          && p.policy().breakMode() == Profile.Policy.BreakMode.DENY)
-        throw new Error("/policy/break", "Clear target cannot progress while breaking is denied");
       return new Profile.Bound(p, activation, scope, select, items, states);
     } catch (io.github.billstark001.latticium.dsl.Syntax.Failure ex) {
       throw new Error("/expression", ex.getMessage());
@@ -210,7 +218,7 @@ public final class ProfileReader {
 
   private static boolean finite(io.github.billstark001.latticium.dsl.Syntax.Expr e) {
     if (e instanceof io.github.billstark001.latticium.dsl.Syntax.Call c)
-      return List.of("box", "sphere", "selection").contains(c.name());
+      return FINITE_ROOTS.contains(c.name());
     if (e instanceof io.github.billstark001.latticium.dsl.Syntax.Binary b)
       return b.operator() == '&'
           ? finite(b.left()) || finite(b.right())
@@ -242,12 +250,15 @@ public final class ProfileReader {
     return n.has(key) ? string(n, p, key) : fallback;
   }
 
-  private static int integer(ObjectNode n, String p, String key, int fallback) {
+  private static int positiveInteger(ObjectNode n, String p, String key, int fallback) {
     var v = n.get(key);
     if (v == null) return fallback;
-    if (!v.isIntegralNumber() || !v.canConvertToInt() || v.intValue() <= 0 && !key.equals("schema"))
-      throw new Error(p, "Expected positive integer");
+    if (!isInt(v) || v.intValue() <= 0) throw new Error(p, "Expected positive integer");
     return v.intValue();
+  }
+
+  private static boolean isInt(JsonNode value) {
+    return value != null && value.isIntegralNumber() && value.canConvertToInt();
   }
 
   private static ResourceId id(String raw, String p) {
