@@ -51,4 +51,58 @@ class PlannerEdgeTest {
                     4));
     assertEquals(new Planner.Cost(2, 1, 0), result.cost());
   }
+
+  @Test
+  void transitionMustDeclareTheChangedCell() {
+    Planner.Oracle oracle =
+        (position, current, goal) ->
+            new Planner.Prediction.Proposals(
+                List.of(
+                    new Planner.Proposal(
+                        Planner.Action.INTERACT,
+                        GOAL,
+                        Set.of(),
+                        new Planner.Cost(1, 0, 0),
+                        "missing-effect")));
+    assertInstanceOf(
+        Planner.Result.NoPlan.class,
+        new Planner()
+            .plan(
+                POSITION,
+                START,
+                new TargetCell.Exact(GOAL),
+                new Profile.Policy(Profile.Policy.BreakMode.SELECTED, 1, 8),
+                oracle,
+                4));
+  }
+
+  @Test
+  void invalidPublicPolicyAndProposalCannotBypassBreakChecks() {
+    assertThrows(NullPointerException.class, () -> new Profile.Policy(null, 1, 8));
+    assertThrows(
+        NullPointerException.class,
+        () -> new Planner.Proposal(null, GOAL, Set.of(POSITION), new Planner.Cost(1, 0, 0), "x"));
+    assertThrows(NullPointerException.class, () -> new Planner.Prediction.Unknown(null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new Planner.Result.Ready(START, List.of(), new Planner.Cost(0, 0, 0)));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new Planner.Result.Ready(START, List.of(step(GOAL, 0)), new Planner.Cost(2, 0, 0)));
+  }
+
+  @Test
+  void clearGoalAcceptsVanillaCaveAirWithoutAnAction() {
+    var caveAir = state("cave_air");
+    assertInstanceOf(
+        Planner.Result.Complete.class,
+        new Planner()
+            .plan(
+                POSITION,
+                caveAir,
+                new TargetCell.Clear(),
+                new Profile.Policy(Profile.Policy.BreakMode.SELECTED, 1, 1),
+                (pos, current, goal) -> fail("Already clear; no prediction needed"),
+                1));
+  }
 }

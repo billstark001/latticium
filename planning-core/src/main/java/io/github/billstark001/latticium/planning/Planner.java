@@ -1,17 +1,18 @@
 package io.github.billstark001.latticium.planning;
 
+import static io.github.billstark001.latticium.dsl.Model.isVanillaAir;
+
 import io.github.billstark001.latticium.dsl.Model.*;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.PriorityQueue;
 import java.util.Set;
 
 /** Bounded state graph search. An oracle supplies version-specific legal transitions. */
 public final class Planner {
-  private static final ResourceId AIR = ResourceId.parse("minecraft:air");
-
   public enum Action {
     PLACE,
     USE_ITEM,
@@ -19,6 +20,7 @@ public final class Planner {
     BREAK
   }
 
+  /** Nonnegative lexicographic cost: actions first, then materials, then risk. */
   public record Cost(int actions, int materials, int risk) implements Comparable<Cost> {
     public Cost {
       if (actions < 0 || materials < 0 || risk < 0)
@@ -44,8 +46,17 @@ public final class Planner {
   public record Proposal(
       Action action, BlockState result, Set<Position> affected, Cost cost, String ruleId) {
     public Proposal {
+      Objects.requireNonNull(action, "action");
+      Objects.requireNonNull(result, "result");
+      Objects.requireNonNull(cost, "cost");
+      Objects.requireNonNull(ruleId, "ruleId");
       affected = Set.copyOf(affected);
       if (cost.actions() == 0) throw new IllegalArgumentException("A step must cost an action");
+    }
+
+    /** A single-cell step must explicitly declare its changed position. */
+    public boolean affectsOnly(Position pos) {
+      return affected.size() == 1 && affected.contains(pos);
     }
   }
 
@@ -54,6 +65,7 @@ public final class Planner {
     Prediction predict(Position pos, BlockState current, TargetCell goal);
   }
 
+  /** Oracle result: proposals, missing facts, unsupported behavior or no legal move. */
   public sealed interface Prediction
       permits Prediction.Proposals,
           Prediction.Unsupported,
@@ -65,18 +77,37 @@ public final class Planner {
       }
     }
 
-    record Unsupported(String reason) implements Prediction {}
+    record Unsupported(String reason) implements Prediction {
+      public Unsupported {
+        Objects.requireNonNull(reason, "reason");
+      }
+    }
 
-    record Unknown(String reason) implements Prediction {}
+    record Unknown(String reason) implements Prediction {
+      public Unknown {
+        Objects.requireNonNull(reason, "reason");
+      }
+    }
 
-    record NoLegalPlacement(String reason) implements Prediction {}
+    record NoLegalPlacement(String reason) implements Prediction {
+      public NoLegalPlacement {
+        Objects.requireNonNull(reason, "reason");
+      }
+    }
   }
 
+  /** Search result; Ready still requires gateway submission and world observation. */
   public sealed interface Result
       permits Result.Ready, Result.Complete, Result.NoPlan, Result.Deferred {
     record Ready(BlockState initial, List<Proposal> steps, Cost cost) implements Result {
       public Ready {
+        Objects.requireNonNull(initial, "initial");
         steps = List.copyOf(steps);
+        Objects.requireNonNull(cost, "cost");
+        if (steps.isEmpty()) throw new IllegalArgumentException("Ready plan has no actions");
+        Cost total = new Cost(0, 0, 0);
+        for (var step : steps) total = total.plus(step.cost());
+        if (!cost.equals(total)) throw new IllegalArgumentException("Plan cost differs from steps");
       }
     }
 
@@ -87,9 +118,14 @@ public final class Planner {
     record Deferred(String reason) implements Result {}
   }
 
-  private record Node(BlockState state, Cost cost, List<Proposal> path) {}
+  private record Node(BlockState state, Cost cost, Node previous, Proposal step) {}
 
-  /** Searches legal single-cell transitions in lexicographic cost order within both budgets. */
+  /**
+   * Searches legal single-cell transitions in lexicographic cost order. {@code maxNodes} limits
+   * expanded states; the policy limits action count. A ready path is cheapest among known
+   * transitions; unknown predictions may hide alternatives. If no known path exists, missing facts
+   * yield Deferred. The returned steps are proposals, never confirmed actions.
+   */
   public Result plan(
       Position pos,
       BlockState current,
@@ -97,13 +133,18 @@ public final class Planner {
       Profile.Policy policy,
       Oracle oracle,
       int maxNodes) {
+    Objects.requireNonNull(pos, "pos");
+    Objects.requireNonNull(current, "current");
+    Objects.requireNonNull(goal, "goal");
+    Objects.requireNonNull(policy, "policy");
+    Objects.requireNonNull(oracle, "oracle");
     if (maxNodes <= 0) throw new IllegalArgumentException("Positive node budget required");
     if (goal instanceof TargetCell.Unknown x) return new Result.Deferred(x.reason());
     if (goal instanceof TargetCell.DontCare) return new Result.Complete();
     if (matches(current, goal)) return new Result.Complete();
     var queue = new PriorityQueue<Node>(Comparator.comparing(Node::cost));
     var best = new HashMap<BlockState, Cost>();
-    queue.add(new Node(current, new Cost(0, 0, 0), List.of()));
+    queue.add(new Node(current, new Cost(0, 0, 0), null, null));
     best.put(current, new Cost(0, 0, 0));
     int visited = 0;
     String last = "No allowed transition";
@@ -112,7 +153,7 @@ public final class Planner {
       Node node = queue.remove();
       if (!node.cost().equals(best.get(node.state()))) continue;
       // A goal is optimal only when it leaves the cost-ordered queue.
-      if (matches(node.state(), goal)) return new Result.Ready(current, node.path(), node.cost());
+      if (matches(node.state(), goal)) return new Result.Ready(current, pathTo(node), node.cost());
       if (visited++ >= maxNodes) return new Result.NoPlan("Search budget exhausted");
       var prediction = oracle.predict(pos, node.state(), goal);
       if (prediction instanceof Prediction.Unknown x) {
@@ -130,7 +171,7 @@ public final class Planner {
       for (var step : ((Prediction.Proposals) prediction).steps()) {
         if (step.action() == Action.BREAK && policy.breakMode() == Profile.Policy.BreakMode.DENY)
           continue;
-        if (!step.affected().isEmpty() && !step.affected().equals(Set.of(pos)))
+        if (!step.affectsOnly(pos))
           continue; // no undeclared collateral effects in single-cell planner
         Cost cost;
         try {
@@ -139,12 +180,10 @@ public final class Planner {
           continue;
         }
         if (cost.actions() > policy.maxActionsPerActivation()) continue;
-        if (best.containsKey(step.result()) && best.get(step.result()).compareTo(cost) <= 0)
-          continue;
-        var path = new ArrayList<>(node.path());
-        path.add(step);
+        var previous = best.get(step.result());
+        if (previous != null && previous.compareTo(cost) <= 0) continue;
         best.put(step.result(), cost);
-        queue.add(new Node(step.result(), cost, path));
+        queue.add(new Node(step.result(), cost, node, step));
       }
     }
     return unknownReason == null ? new Result.NoPlan(last) : new Result.Deferred(unknownReason);
@@ -152,6 +191,13 @@ public final class Planner {
 
   private static boolean matches(BlockState state, TargetCell goal) {
     if (goal instanceof TargetCell.Exact x) return x.state().equals(state);
-    return goal instanceof TargetCell.Clear && state.block().equals(AIR);
+    return goal instanceof TargetCell.Clear && isVanillaAir(state);
+  }
+
+  private static List<Proposal> pathTo(Node goal) {
+    var reversed = new ArrayList<Proposal>();
+    for (Node node = goal; node.previous() != null; node = node.previous())
+      reversed.add(node.step());
+    return reversed.reversed();
   }
 }
