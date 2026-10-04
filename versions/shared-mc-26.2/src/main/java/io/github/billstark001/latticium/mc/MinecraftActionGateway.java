@@ -110,9 +110,15 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
         if (membership != Truth.TRUE)
           return new Host.Submission.Stale("Material no longer allowed");
       }
-      var prediction =
-          new MinecraftPlacementOracle(minecraft)
-              .predict(pos, before.expectedCurrent(), before.expectedTarget());
+      Planner.Prediction prediction;
+      try {
+        prediction =
+            new MinecraftPlacementOracle(minecraft)
+                .predict(pos, before.expectedCurrent(), before.expectedTarget());
+      } catch (RuntimeException error) {
+        return new Host.Submission.Deferred(
+            "Placement prediction unavailable: " + error.getClass().getSimpleName());
+      }
       if (!(prediction instanceof Planner.Prediction.Proposals proposals)
           || proposals.steps().stream()
               .noneMatch(
@@ -163,7 +169,10 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     if (!MinecraftStateCodec.id(level.dimension().identifier()).equals(pos.dimension()))
       return complete(receipt, Host.Observation.CONTRADICTED);
     var blockPos = new BlockPos(pos.x(), pos.y(), pos.z());
-    if (!level.hasChunk(pos.x() >> 4, pos.z() >> 4)) return Host.Observation.STILL_PENDING;
+    if (!level.hasChunk(pos.x() >> 4, pos.z() >> 4))
+      return level.getGameTime() - action.startedTick() > TIMEOUT_TICKS
+          ? complete(receipt, Host.Observation.TIMED_OUT)
+          : Host.Observation.STILL_PENDING;
     if (LatticiumClient.get().serverRevision(pos) > action.serverRevision()
         && MinecraftStateCodec.state(level.getBlockState(blockPos)).equals(expected))
       return complete(receipt, Host.Observation.CONFIRMED);

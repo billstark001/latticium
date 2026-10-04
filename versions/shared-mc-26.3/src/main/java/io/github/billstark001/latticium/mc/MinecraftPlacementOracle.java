@@ -27,6 +27,20 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
     this.minecraft = minecraft;
   }
 
+  /** Whether a normal hotbar block item could supply this target block after a break. */
+  public boolean hasHotbarBlockItem(ResourceId block) {
+    if (minecraft.player == null) return false;
+    var inventory = minecraft.player.getInventory();
+    for (int slot = 0; slot < Math.min(9, inventory.getContainerSize()); slot++) {
+      var stack = inventory.getItem(slot);
+      if (!stack.isEmpty()
+          && stack.getItem() instanceof BlockItem item
+          && MinecraftStateCodec.id(BuiltInRegistries.BLOCK.getKey(item.getBlock())).equals(block))
+        return true;
+    }
+    return false;
+  }
+
   @Override
   public MaterialSelector.Outcome statesFor(ResourceId item, Position pos) {
     if (!minecraft.isSameThread())
@@ -34,7 +48,7 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
     if (minecraft.player == null || minecraft.level == null)
       return new MaterialSelector.Outcome.Unknown("No world or player");
     var states = new HashSet<BlockState>();
-    for (var placement : placements(pos)) {
+    for (var placement : placements(pos, item)) {
       if (placement.item().equals(item)) states.add(placement.state());
     }
     return states.isEmpty()
@@ -52,7 +66,7 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
     if (repeater != null) proposals.add(repeater);
     var snow = snowLayerStep(pos, current);
     if (snow != null) proposals.add(snow);
-    for (var placement : placements(pos)) {
+    for (var placement : placements(pos, null)) {
       if (!placement.state().equals(exact.state())) continue;
       proposals.add(
           new Planner.Proposal(
@@ -154,7 +168,8 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
             pos));
   }
 
-  private List<Placement> placements(Position pos) {
+  /** A material query only predicts matching hotbar stacks; planning checks all stacks. */
+  private List<Placement> placements(Position pos, ResourceId requiredItem) {
     var level = minecraft.level;
     var player = minecraft.player;
     if (level == null || player == null) return List.of();
@@ -167,6 +182,7 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
       var stack = inventory.getItem(slot);
       if (!(stack.getItem() instanceof BlockItem item) || stack.isEmpty()) continue;
       var itemId = MinecraftStateCodec.id(BuiltInRegistries.ITEM.getKey(item));
+      if (requiredItem != null && !requiredItem.equals(itemId)) continue;
       for (var direction : Direction.values()) {
         var support = target.relative(direction);
         if (!level.hasChunk(support.getX() >> 4, support.getZ() >> 4)) continue;

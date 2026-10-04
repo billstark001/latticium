@@ -4,12 +4,16 @@ import io.github.billstark001.latticium.dsl.Model;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.properties.Property;
 
 /** Converts live registry values to immutable values understood by the pure core. */
 public final class MinecraftStateCodec {
+  private static final Map<net.minecraft.world.level.block.state.BlockState, Model.BlockState>
+      STATE_CACHE = new ConcurrentHashMap<>();
+
   private MinecraftStateCodec() {}
 
   public static Model.ResourceId id(Identifier id) {
@@ -21,6 +25,11 @@ public final class MinecraftStateCodec {
   }
 
   public static Model.BlockState state(net.minecraft.world.level.block.state.BlockState source) {
+    return STATE_CACHE.computeIfAbsent(source, MinecraftStateCodec::encodeState);
+  }
+
+  private static Model.BlockState encodeState(
+      net.minecraft.world.level.block.state.BlockState source) {
     var properties = new HashMap<String, String>();
     for (Property<?> property : source.getProperties())
       properties.put(property.getName(), valueName(source, property));

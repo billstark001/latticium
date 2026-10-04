@@ -3,6 +3,9 @@ package io.github.billstark001.latticium.mc;
 import io.github.billstark001.latticium.dsl.Model;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
 import io.github.billstark001.latticium.dsl.Model.SetType;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -14,6 +17,9 @@ import net.minecraft.tags.TagKey;
 /** Binds symbolic DSL IDs against the registries of the current client world. */
 public final class MinecraftRegistry implements Model.Registry {
   private final ClientLevel level;
+  private final Map<ResourceId, Set<Model.BlockState>> stateCache = new HashMap<>();
+  private final Map<SetType, Set<ResourceId>> tagIdCache = new EnumMap<>(SetType.class);
+  private final Map<SetType, Set<ResourceId>> universeCache = new EnumMap<>(SetType.class);
 
   public MinecraftRegistry(ClientLevel level) {
     this.level = level;
@@ -40,9 +46,15 @@ public final class MinecraftRegistry implements Model.Registry {
   public Resolution resolveTag(SetType kind, ResourceId id) {
     Registry<?> registry = registry(kind);
     if (registry == null) return Resolution.UNAVAILABLE;
-    return registry
-            .getTags()
-            .anyMatch(tag -> tag.key().location().equals(MinecraftStateCodec.id(id)))
+    return tagIdCache
+            .computeIfAbsent(
+                kind,
+                ignored ->
+                    registry
+                        .getTags()
+                        .map(tag -> MinecraftStateCodec.id(tag.key().location()))
+                        .collect(Collectors.toUnmodifiableSet()))
+            .contains(id)
         ? Resolution.FOUND
         : Resolution.MISSING;
   }
@@ -65,13 +77,20 @@ public final class MinecraftRegistry implements Model.Registry {
   public Set<ResourceId> universe(SetType kind) {
     Registry<?> registry = registry(kind);
     if (registry == null) return Set.of();
-    return registry.keySet().stream()
-        .map(MinecraftStateCodec::id)
-        .collect(Collectors.toUnmodifiableSet());
+    return universeCache.computeIfAbsent(
+        kind,
+        ignored ->
+            registry.keySet().stream()
+                .map(MinecraftStateCodec::id)
+                .collect(Collectors.toUnmodifiableSet()));
   }
 
   @Override
   public Set<Model.BlockState> states(ResourceId block) {
+    return stateCache.computeIfAbsent(block, this::loadStates);
+  }
+
+  private Set<Model.BlockState> loadStates(ResourceId block) {
     return BuiltInRegistries.BLOCK
         .getOptional(MinecraftStateCodec.id(block))
         .map(
