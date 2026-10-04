@@ -241,6 +241,16 @@ public final class NeoCommands {
                     literal("status")
                         .executes(c -> run(c.getSource(), LatticiumClient.get()::status)))
                 .then(
+                    literal("refresh")
+                        .executes(
+                            c ->
+                                run(
+                                    c.getSource(),
+                                    () -> {
+                                      LatticiumClient.get().refresh();
+                                      return "Refresh queued: " + LatticiumClient.get().status();
+                                    })))
+                .then(
                     literal("pause")
                         .executes(
                             c ->
