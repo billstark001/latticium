@@ -12,8 +12,11 @@ import io.github.billstark001.latticium.planning.Host;
 import io.github.billstark001.latticium.planning.SectionScanner.Bounds;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.WeakHashMap;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.common.Mod;
@@ -21,9 +24,14 @@ import net.neoforged.fml.common.Mod;
 /** Reads the selected, already loaded Forgematica placement without importing schematic files. */
 @Mod(value = "latticium_forgematica_bridge", dist = Dist.CLIENT)
 public final class ForgematicaBridge implements LatticiumClient.BlueprintProvider {
-  private UUID selectedId;
-  private ResourceId dimension;
-  private List<Bounds> selectedBounds = List.of();
+  private record PlacementSnapshot(
+      UUID id,
+      SchematicPlacement placement,
+      ResourceId dimension,
+      List<Bounds> bounds,
+      ClientLevel world) {}
+
+  private final Map<Host.SessionId, PlacementSnapshot> snapshots = new WeakHashMap<>();
 
   public ForgematicaBridge() {
     LatticiumClient.get()
@@ -44,9 +52,10 @@ public final class ForgematicaBridge implements LatticiumClient.BlueprintProvide
       bounds.add(bounds(worldId, box));
     }
     if (!bounds.isEmpty()) {
-      selectedId = selected.getHashId();
-      dimension = worldId;
-      selectedBounds = List.copyOf(bounds);
+      snapshots.put(
+          session,
+          new PlacementSnapshot(
+              selected.getHashId(), selected, worldId, List.copyOf(bounds), minecraft.level));
     }
     return List.copyOf(bounds);
   }
@@ -56,21 +65,24 @@ public final class ForgematicaBridge implements LatticiumClient.BlueprintProvide
     var minecraft = Minecraft.getInstance();
     if (!minecraft.isSameThread() || minecraft.level == null)
       return new TargetCell.Unknown("No client world");
+    var snapshot = snapshots.get(session);
+    if (snapshot == null || snapshot.world() != minecraft.level)
+      return new TargetCell.Unknown("Blueprint session changed");
     var selected = selected();
-    if (selected == null || selectedId == null || !selectedId.equals(selected.getHashId()))
+    if (selected != snapshot.placement() || !snapshot.id().equals(selected.getHashId()))
       return new TargetCell.Unknown("Active placement changed");
-    if (!pos.dimension().equals(dimension))
+    if (!pos.dimension().equals(snapshot.dimension()))
       return new TargetCell.Unknown("Blueprint dimension changed");
     var currentBounds = new ArrayList<Bounds>();
     for (var box : selected.getSubRegionBoxes(RequiredEnabled.PLACEMENT_ENABLED).values()) {
-      if (box.getPos1() != null && box.getPos2() != null) currentBounds.add(bounds(dimension, box));
+      if (box.getPos1() != null && box.getPos2() != null)
+        currentBounds.add(bounds(snapshot.dimension(), box));
     }
-    if (!currentBounds.equals(selectedBounds))
+    if (!currentBounds.equals(snapshot.bounds()))
       return new TargetCell.Unknown("Active placement bounds changed");
     var blockPos = new BlockPos(pos.x(), pos.y(), pos.z());
     int inside = 0;
-    for (var box : selected.getSubRegionBoxes(RequiredEnabled.PLACEMENT_ENABLED).values())
-      if (contains(box, blockPos)) inside++;
+    for (var box : currentBounds) if (box.contains(pos)) inside++;
     if (inside == 0) return new TargetCell.DontCare();
     if (inside > 1) return new TargetCell.Unknown("Overlapping blueprint subregions");
     for (var placement : DataManager.getSchematicPlacementManager().getAllSchematicsPlacements()) {
