@@ -5,6 +5,7 @@ import static net.minecraft.commands.Commands.literal;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
+import io.github.billstark001.latticium.mc.CommandProfiles;
 import io.github.billstark001.latticium.mc.LatticiumClient;
 import java.nio.file.Files;
 import net.minecraft.client.Minecraft;
@@ -71,10 +72,7 @@ public final class NeoCommands {
                                               var item =
                                                   ResourceId.parse(
                                                       StringArgumentType.getString(c, "item"));
-                                              start(
-                                                  "current(s{minecraft:air})",
-                                                  "\"items\":\"{" + item + "}\"",
-                                                  "deny");
+                                              start(CommandProfiles.fill(item));
                                               return LatticiumClient.get().status();
                                             }))))
                 .then(
@@ -84,7 +82,7 @@ public final class NeoCommands {
                                 run(
                                     c.getSource(),
                                     () -> {
-                                      start("all()", "\"clear\":true", "selected");
+                                      start(CommandProfiles.clear());
                                       return LatticiumClient.get().status();
                                     })))
                 .then(
@@ -106,10 +104,7 @@ public final class NeoCommands {
                                                           ResourceId.parse(
                                                               StringArgumentType.getString(
                                                                   c, "item"));
-                                                      start(
-                                                          "current(s{" + source + "})",
-                                                          "\"items\":\"{" + item + "}\"",
-                                                          "selected");
+                                                      start(CommandProfiles.replace(source, item));
                                                       return LatticiumClient.get().status();
                                                     })))))
                 .then(
@@ -250,19 +245,7 @@ public final class NeoCommands {
                                     }))));
   }
 
-  private static void start(String select, String target, String breakMode) {
-    var json =
-        "{\"schema\":1,\"id\":\"user:command\","
-            + "\"scope\":\"selection(\\\"build\\\")\","
-            + "\"select\":{\"where\":\""
-            + select
-            + "\"},"
-            + "\"target\":{"
-            + target
-            + "},"
-            + "\"policy\":{\"break\":\""
-            + breakMode
-            + "\"}}";
+  private static void start(String json) {
     LatticiumClient.get().startInline(Minecraft.getInstance(), json);
   }
 

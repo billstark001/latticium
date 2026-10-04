@@ -5,6 +5,7 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
+import io.github.billstark001.latticium.mc.CommandProfiles;
 import io.github.billstark001.latticium.mc.LatticiumClient;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -76,10 +77,7 @@ public final class LatticiumFabricClient implements ClientModInitializer {
                                                   var item =
                                                       ResourceId.parse(
                                                           StringArgumentType.getString(c, "item"));
-                                                  start(
-                                                      "current(s{minecraft:air})",
-                                                      "\"items\":\"{" + item + "}\"",
-                                                      "deny");
+                                                  start(CommandProfiles.fill(item));
                                                   return LatticiumClient.get().status();
                                                 }))))
                     .then(
@@ -89,7 +87,7 @@ public final class LatticiumFabricClient implements ClientModInitializer {
                                     run(
                                         c.getSource(),
                                         () -> {
-                                          start("all()", "\"clear\":true", "selected");
+                                          start(CommandProfiles.clear());
                                           return LatticiumClient.get().status();
                                         })))
                     .then(
@@ -112,9 +110,8 @@ public final class LatticiumFabricClient implements ClientModInitializer {
                                                                   StringArgumentType.getString(
                                                                       c, "item"));
                                                           start(
-                                                              "current(s{" + source + "})",
-                                                              "\"items\":\"{" + item + "}\"",
-                                                              "selected");
+                                                              CommandProfiles.replace(
+                                                                  source, item));
                                                           return LatticiumClient.get().status();
                                                         })))))
                     .then(
@@ -247,19 +244,7 @@ public final class LatticiumFabricClient implements ClientModInitializer {
                                         })))));
   }
 
-  private static void start(String select, String target, String breakMode) {
-    var json =
-        "{\"schema\":1,\"id\":\"user:command\","
-            + "\"scope\":\"selection(\\\"build\\\")\","
-            + "\"select\":{\"where\":\""
-            + select
-            + "\"},"
-            + "\"target\":{"
-            + target
-            + "},"
-            + "\"policy\":{\"break\":\""
-            + breakMode
-            + "\"}}";
+  private static void start(String json) {
     LatticiumClient.get().startInline(Minecraft.getInstance(), json);
   }
 

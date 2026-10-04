@@ -4,12 +4,16 @@ import io.github.billstark001.latticium.dsl.Model.ResourceId;
 import io.github.billstark001.latticium.planning.SectionScanner.Bounds;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -29,16 +33,33 @@ final class WorldStorage {
       server = "singleplayer:" + minecraft.getSingleplayerServer().getWorldData().getLevelName();
     else return null;
     var dimension = minecraft.level.dimension().identifier().toString();
+    var directory =
+        minecraft
+            .gameDirectory
+            .toPath()
+            .resolve("config/latticium/worlds")
+            .resolve(hash(server))
+            .toAbsolutePath()
+            .normalize();
+    return dimensionPath(directory, dimension);
+  }
+
+  static Path dimensionPath(Path directory, String dimension) {
+    directory = directory.toAbsolutePath().normalize();
+    var safe = directory.resolve("dim-" + hash(dimension) + ".properties");
+    var legacy = directory.resolve(dimension.replace(':', '_') + ".properties").normalize();
+    // Existing preferences keep their old path only when it remains inside this server's directory.
+    if (!Files.exists(safe)
+        && legacy.startsWith(directory)
+        && Files.isRegularFile(legacy, LinkOption.NOFOLLOW_LINKS)) return legacy;
+    return safe;
+  }
+
+  private static String hash(String value) {
     try {
       var bytes =
-          MessageDigest.getInstance("SHA-256").digest(server.getBytes(StandardCharsets.UTF_8));
-      var key = HexFormat.of().formatHex(bytes);
-      return minecraft
-          .gameDirectory
-          .toPath()
-          .resolve("config/latticium/worlds")
-          .resolve(key)
-          .resolve(dimension.replace(':', '_') + ".properties");
+          MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(bytes);
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException(impossible);
     }
@@ -59,13 +80,24 @@ final class WorldStorage {
     } catch (IOException error) {
       throw new IllegalStateException("Cannot read Latticium preferences: " + path, error);
     }
+    var loadedProfiles = new HashMap<String, String>();
+    var loadedSelections = new HashMap<String, List<Bounds>>();
+    var loadedEnabled = new HashSet<String>();
     for (var name : values.stringPropertyNames()) {
-      if (name.startsWith("profile.")) profiles.put(name.substring(8), values.getProperty(name));
+      if (name.startsWith("profile."))
+        loadedProfiles.put(name.substring(8), values.getProperty(name));
       if (name.startsWith("selection."))
-        selections.put(name.substring(10), parseBounds(values.getProperty(name)));
-      if (name.startsWith("enabled.") && Boolean.parseBoolean(values.getProperty(name)))
-        enabled.add(name.substring(8));
+        loadedSelections.put(name.substring(10), parseBounds(values.getProperty(name)));
+      if (name.startsWith("enabled.")) {
+        var flag = values.getProperty(name);
+        if (flag.equals("true")) loadedEnabled.add(name.substring(8));
+        else if (!flag.equals("false"))
+          throw new IllegalArgumentException("Invalid stored Latticium enabled flag: " + name);
+      }
     }
+    profiles.putAll(loadedProfiles);
+    selections.putAll(loadedSelections);
+    enabled.addAll(loadedEnabled);
   }
 
   static void save(
@@ -81,12 +113,18 @@ final class WorldStorage {
     enabled.forEach(name -> values.setProperty("enabled." + name, "true"));
     try {
       Files.createDirectories(path.getParent());
-      var temporary = path.resolveSibling(path.getFileName() + ".part");
+      var temporary =
+          Files.createTempFile(path.getParent(), path.getFileName().toString() + ".", ".part");
       try {
         try (var output = Files.newOutputStream(temporary)) {
           values.store(output, "Latticium client preferences");
         }
-        Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+        try {
+          Files.move(
+              temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException unsupported) {
+          Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+        }
       } finally {
         Files.deleteIfExists(temporary);
       }
