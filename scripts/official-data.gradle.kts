@@ -1,13 +1,17 @@
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
+import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.Collections
@@ -28,6 +32,12 @@ val versions =
         .distinct()
 
 require(versions.isNotEmpty()) { "officialVersions must contain at least one version" }
+
+val versionComponent = Regex("[A-Za-z0-9][A-Za-z0-9._-]*")
+
+require(versions.all { versionComponent.matches(it) && it != ".." }) {
+    "officialVersions entries must be single directory names"
+}
 
 val mapper = ObjectMapper().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
 val allowedHosts = setOf("piston-meta.mojang.com", "piston-data.mojang.com")
@@ -225,6 +235,9 @@ fun ensureReports(
     serverSha1: String,
     java: String,
 ): Path {
+    require(directory.toRealPath().parent == officialRoot.toRealPath()) {
+        "Official version directory is outside the data root: $directory"
+    }
     val generated = directory.resolve("generated")
     val reports = generated.resolve("reports")
     val stamp = generated.resolve("server.sha1")
@@ -237,7 +250,26 @@ fun ensureReports(
         println("cached reports $version")
         return reports
     }
-    if (Files.exists(generated)) generated.toFile().deleteRecursively()
+    if (Files.exists(generated)) {
+        Files.walkFileTree(
+            generated,
+            object : SimpleFileVisitor<Path>() {
+                override fun visitFile(
+                    file: Path,
+                    attributes: BasicFileAttributes,
+                ): FileVisitResult {
+                    Files.delete(file)
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun postVisitDirectory(dir: Path, error: IOException?): FileVisitResult {
+                    if (error != null) throw error
+                    Files.delete(dir)
+                    return FileVisitResult.CONTINUE
+                }
+            },
+        )
+    }
     Files.createDirectories(generated)
     val log = directory.resolve("data-generator.log")
     val process =
