@@ -1,0 +1,199 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to retry, for example v0.1.0
+        required: true
+        type: string
+      publish_modrinth:
+        description: Publish both Modrinth projects when credentials are configured
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      channel: ${{ steps.metadata.outputs.channel }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+      publish_modrinth: ${{ steps.metadata.outputs.publish_modrinth }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      WANT_MODRINTH: ${{ github.event_name == 'push' || inputs.publish_modrinth }}
+      MAIN_PROJECT_ID: ${{ vars.MODRINTH_MAIN_PROJECT_ID }}
+      BRIDGE_PROJECT_ID: ${{ vars.MODRINTH_BRIDGE_PROJECT_ID }}
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Validate release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^mod_version=//p' gradle.properties)"
+          test "$(grep -c '^mod_version=' gradle.properties)" -eq 1
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          test "$RELEASE_TAG" = "v$version"
+          test "$(git tag --points-at HEAD | grep -Fx "$RELEASE_TAG" | wc -l)" -eq 1
+          grep -Eq "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md
+          awk -v version="$version" '
+            index($0, "## [" version "]") == 1 { section = 1 }
+            section && /^## \[/ && index($0, "## [" version "]") != 1 { exit }
+            section { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+          if [[ "$version" != *-* ]]; then
+            channel=release
+            prerelease=false
+          elif [[ "${version#*-}" == *alpha* ]]; then
+            channel=alpha
+            prerelease=true
+          else
+            channel=beta
+            prerelease=true
+          fi
+          publish_modrinth=false
+          if [[ "$WANT_MODRINTH" == true && -n "$MAIN_PROJECT_ID" && -n "$BRIDGE_PROJECT_ID" && -n "$MODRINTH_TOKEN" ]]; then
+            publish_modrinth=true
+          elif [[ "$WANT_MODRINTH" == true ]]; then
+            echo '::notice::Both Modrinth project IDs and MODRINTH_TOKEN are required; skipping both Modrinth projects.'
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$RELEASE_TAG"
+            echo "channel=$channel"
+            echo "prerelease=$prerelease"
+            echo "publish_modrinth=$publish_modrinth"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew check --no-parallel --stacktrace
+      - name: Build and collect seven release files
+        shell: pwsh
+        run: ./scripts/build-release.ps1
+      - run: mv release-notes.md build/release/release-notes.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ steps.metadata.outputs.tag }}
+          path: build/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-github:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-${{ needs.build.outputs.tag }}
+          path: build/release
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: Latticium ${{ needs.build.outputs.tag }}
+          body_path: build/release/release-notes.md
+          prerelease: ${{ needs.build.outputs.prerelease }}
+          files: |
+            build/release/*.jar
+            build/release/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+
+  publish-main-modrinth:
+    needs: build
+    if: ${{ needs.build.outputs.publish_modrinth == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - minecraft: '26.2'
+            loader: fabric
+            dependencies: fabric-api(required)
+          - minecraft: '26.3'
+            loader: fabric
+            dependencies: fabric-api(required)
+          - minecraft: '26.2'
+            loader: neoforge
+            dependencies: ''
+          - minecraft: '26.3'
+            loader: neoforge
+            dependencies: ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-${{ needs.build.outputs.tag }}
+          path: build/release
+      - uses: Kir-Antipov/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_MAIN_PROJECT_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          files: build/release/latticium-${{ matrix.loader }}-${{ matrix.minecraft }}-${{ needs.build.outputs.version }}.jar
+          name: Latticium ${{ needs.build.outputs.version }} for Minecraft ${{ matrix.minecraft }} (${{ matrix.loader }})
+          version: ${{ needs.build.outputs.version }}+${{ matrix.minecraft }}-${{ matrix.loader }}
+          version-type: ${{ needs.build.outputs.channel }}
+          changelog-file: build/release/release-notes.md
+          game-versions: ${{ matrix.minecraft }}
+          game-version-filter: none
+          loaders: ${{ matrix.loader }}
+          environment: client
+          dependencies: ${{ matrix.dependencies }}
+
+  publish-bridge-modrinth:
+    needs: [build, publish-main-modrinth]
+    if: ${{ needs.build.outputs.publish_modrinth == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - minecraft: '26.2'
+            loader: fabric
+            source: litematica
+          - minecraft: '26.3'
+            loader: fabric
+            source: litematica
+          - minecraft: '26.2'
+            loader: neoforge
+            source: forgematica
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-${{ needs.build.outputs.tag }}
+          path: build/release
+      - uses: Kir-Antipov/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_BRIDGE_PROJECT_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          files: build/release/latticium-${{ matrix.source }}-${{ matrix.loader }}-${{ matrix.minecraft }}-${{ needs.build.outputs.version }}.jar
+          name: Latticium ${{ matrix.source }} bridge ${{ needs.build.outputs.version }} for Minecraft ${{ matrix.minecraft }} (${{ matrix.loader }})
+          version: ${{ needs.build.outputs.version }}+${{ matrix.minecraft }}-${{ matrix.loader }}-${{ matrix.source }}
+          version-type: ${{ needs.build.outputs.channel }}
+          changelog-file: build/release/release-notes.md
+          game-versions: ${{ matrix.minecraft }}
+          game-version-filter: none
+          loaders: ${{ matrix.loader }}
+          environment: client
+          dependencies: |
+            ${{ vars.MODRINTH_MAIN_PROJECT_ID }}@${{ needs.build.outputs.version }}+${{ matrix.minecraft }}-${{ matrix.loader }}(required)
+            ${{ matrix.source }}(required)

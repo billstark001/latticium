@@ -7,11 +7,13 @@ Latticium is an experimental client construction mod for Minecraft 26.2 and 26.3
 Use JDK 25 for Gradle. The core modules compile with `--release 21`.
 
 ```powershell
-.\gradlew.bat formatAll check build
+.\gradlew.bat formatAll check buildAll
 .\gradlew.bat fetchOfficialMinecraft bakeOfficialMinecraft :planning-core:officialTest
 ```
 
 The first command builds four client mods and three optional bridges. The second verifies registry fixtures generated from the official 26.2 and 26.3 game data. The build downloads exact reference versions of Litematica, MaLiLib, Forgematica, and MaFgLib into `.tmp/reference-mods`; these source mods are not bundled into the bridge JARs. See [validation details](docs/26.2-26.3-validation.md) and [official data validation](docs/official-data-validation.md).
+
+For IDEA run configurations, local smoke checks, and contribution checks, see [CONTRIBUTING.md](CONTRIBUTING.md). To collect the seven distributable JARs or prepare a tagged release, see [release instructions](docs/releasing.md). The main mod and optional bridges publish to separate Modrinth projects.
 
 | Game | Loader | Main mod | Optional bridge |
 |---|---|---|---|
