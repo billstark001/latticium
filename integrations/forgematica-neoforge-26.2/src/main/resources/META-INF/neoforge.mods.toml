@@ -1,17 +1,17 @@
 modLoader="javafml"
 loaderVersion="[1,)"
-license="All rights reserved"
+license="MIT"
 
 [[mods]]
 modId="latticium_forgematica_bridge"
-version="0.1.0"
+version="${modVersion}"
 displayName="Latticium Forgematica Bridge"
 description="Reads active Forgematica placements for Latticium"
 
 [[dependencies.latticium_forgematica_bridge]]
 modId="latticium"
 type="required"
-versionRange="[0.1.0,0.1.0]"
+versionRange="[${modVersion},${modVersion}]"
 ordering="AFTER"
 side="CLIENT"
 

@@ -1,10 +1,10 @@
 modLoader="javafml"
 loaderVersion="[1,)"
-license="All rights reserved"
+license="MIT"
 
 [[mods]]
 modId="latticium"
-version="0.1.0"
+version="${modVersion}"
 displayName="Latticium"
 description="Client construction engine"
 

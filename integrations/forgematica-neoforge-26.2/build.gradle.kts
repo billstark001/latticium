@@ -17,14 +17,15 @@ val sharedSource =
         .named("main")
         .get()
 
-version = "0.1.0"
-
 base.archivesName.set("latticium-forgematica-neoforge-26.2")
 
 neoForge {
     version = "26.2.0.88"
     runs {
-        create("client") { client() }
+        create("client") {
+            client()
+            ideName.set("Minecraft Client Latticium Forgematica 26.2")
+        }
     }
     mods {
         create("latticium_forgematica_bridge") { sourceSet(sourceSets.main.get()) }

@@ -1,8 +1,12 @@
 plugins { id("net.fabricmc.fabric-loom") }
 
-version = "0.1.0"
-
 base.archivesName.set("latticium-litematica-fabric-26.2")
+
+loom {
+    runs {
+        named("client") { configName = "Minecraft Client Latticium Litematica 26.2" }
+    }
+}
 
 dependencies {
     minecraft("com.mojang:minecraft:26.2")

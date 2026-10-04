@@ -9,14 +9,15 @@ val sharedSource =
         .named("main")
         .get()
 
-version = "0.1.0"
-
 base.archivesName.set("latticium-neoforge-26.3")
 
 neoForge {
     version = "26.3.0.48-beta"
     runs {
-        create("client") { client() }
+        create("client") {
+            client()
+            ideName.set("Minecraft Client Latticium NeoForge 26.3")
+        }
     }
     mods {
         create("latticium") {

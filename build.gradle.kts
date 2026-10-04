@@ -15,6 +15,36 @@ plugins {
     id("net.neoforged.moddev") version "2.0.147" apply false
 }
 
+version = providers.gradleProperty("mod_version").get()
+
+val distributableProjects =
+    listOf(
+        ":versions:fabric-26.2",
+        ":versions:fabric-26.3",
+        ":versions:neoforge-26.2",
+        ":versions:neoforge-26.3",
+        ":integrations:litematica-fabric-26.2",
+        ":integrations:litematica-fabric-26.3",
+        ":integrations:forgematica-neoforge-26.2",
+    )
+
+tasks.register("buildAll") {
+    group = LifecycleBasePlugin.BUILD_GROUP
+    description = "Build the four client mods and three optional bridges"
+    dependsOn(distributableProjects.map { "$it:build" })
+}
+
+tasks.register("syncIdeaRunConfigurations") {
+    group = "ide"
+    description = "Generate IDEA client run configurations for Fabric mods and bridges"
+    dependsOn(
+        ":versions:fabric-26.2:ideaSyncTask",
+        ":versions:fabric-26.3:ideaSyncTask",
+        ":integrations:litematica-fabric-26.2:ideaSyncTask",
+        ":integrations:litematica-fabric-26.3:ideaSyncTask",
+    )
+}
+
 apply(from = "scripts/official-data.gradle.kts")
 
 val referenceMods =
@@ -149,7 +179,7 @@ tasks.named("check") {
 subprojects {
     val coreModule = path == ":dsl-core" || path == ":planning-core"
     group = "io.github.billstark001.latticium"
-    version = "0.1.0"
+    version = rootProject.version
     apply(plugin = "java-library")
     apply(plugin = "com.diffplug.spotless")
     repositories { mavenCentral() }
@@ -175,6 +205,14 @@ subprojects {
         )
     }
     tasks.withType<Test>().configureEach { useJUnitPlatform() }
+    tasks.withType<ProcessResources>().configureEach {
+        val releaseVersion = project.version.toString()
+        inputs.property("releaseVersion", releaseVersion)
+        filesMatching("fabric.mod.json") { expand("modVersion" to releaseVersion) }
+        filesMatching("META-INF/neoforge.mods.toml") {
+            expand("modVersion" to releaseVersion)
+        }
+    }
     dependencies {
         "testImplementation"("org.junit.jupiter:junit-jupiter:5.12.2")
         "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
