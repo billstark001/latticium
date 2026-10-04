@@ -6,7 +6,7 @@ Latticium is a client mod. Commands act through the player's normal reach, inven
 
 Stand at one corner and run `/latticium pos1`, then stand at the opposite corner and run `/latticium pos2`. Each command prints the recorded block coordinates, such as `pos1 set: (10, 64, -5)`. Save the inclusive box with `/latticium selection save build`. The selection is stored for the current server and dimension. A profile that names an unavailable or empty selection fails to start with an explicit error.
 
-The commands `/latticium fill minecraft:stone`, `/latticium replace minecraft:dirt minecraft:stone`, and `/latticium clear` use `build`. Fill selects air, replace selects the named source block, and clear selects the whole box. Use `/latticium status`, `pause`, `resume`, and `cancel` to inspect and control the job. Pausing prevents the next submission; an action already sent to the server still has to settle. An action budget limits submissions in one activation, and reaching it ends that activation even if candidates remain.
+The commands `/latticium fill minecraft:stone`, `/latticium replace minecraft:dirt minecraft:stone`, and `/latticium clear` use `build`. Fill selects air, replace selects the named source block, and clear selects the whole box. Use `/latticium status`, `pause`, `resume`, and `cancel` to inspect and control the job. `/latticium refresh` immediately queues a full rescan of the current job, including a job in manual refresh mode. Scanning proceeds within the normal per-tick budget; the command does not synchronously scan the whole selection. Pausing prevents the next submission; an action already sent to the server still has to settle. An action budget limits submissions in one activation, and reaching it ends that activation even if candidates remain. An explicit refresh after exhaustion starts a new action budget.
 
 ## A profile file
 
@@ -26,6 +26,7 @@ Save this as `config/latticium/profiles/stone-fill.latticium.json` in the game d
   },
   "policy": {
     "break": "deny",
+    "refresh": "continuous",
     "max_actions_per_tick": 1,
     "max_actions_per_activation": 256
   }
@@ -35,6 +36,9 @@ Save this as `config/latticium/profiles/stone-fill.latticium.json` in the game d
 Run `/latticium profile load stone-fill.latticium.json`, then `/latticium preview user:stone_fill` and `/latticium start user:stone_fill`. Profile IDs with a namespace use the unquoted `namespace:path` form in `preview`, `start`, `enable`, and `disable`. Preview reads at most four sections and reports how many sections remain; it is an estimate, not a whole-selection count. The separate `/latticium query <expression>` command likewise checks at most four sections of `build`; target-view predicates in this standalone query report Unknown because no target source is supplied. Profile expression strings contain one expression with no trailing semicolon. JSON string escaping still applies.
 
 `scope` must have enumerable finite bounds, such as `box(x0,y0,z0,x1,y1,z1)`, `sphere(player,r)`, or `selection("build")`. `select.where` filters positions inside that scope. `target` has exactly one main form: `items` (an item set), `clear: true`, or `source` (a registered target provider). Item targets may also specify a `states` state set and a `choose` preference. Source targets may specify `using` to restrict items and `include_air` to turn blueprint air into a clear target. The default break policy is `deny`; `selected` permits breaking selected positions. Missing fields and unknown JSON keys produce profile errors.
+
+`policy.refresh` defaults to `continuous`; set it to `manual` for a one-pass job. Continuous jobs revisit positions affected by server block updates, including neighbors read through `offset`, `adjacent`, or `surface`. A player-dependent sphere is revisited only when the player's block position changes. Light and external target reads also receive a slower periodic fallback. A continuous job stays active after its initial scan until cancelled, stopped by its activation, or stopped by its action budget. `/latticium refresh` works in either mode and also updates the finite bounds of a `sphere(player, r)` scope at the player's current position.
+Automatic activation is sampled when the player's block position changes or a block update touches its read radius; a 200-tick fallback covers facts that can change without those events. An unchanged activation is not captured every client tick.
 
 For a blueprint, install the matching optional bridge and select an active placement in the source mod. A profile can use `"scope": "selection(\"active_blueprint\")"` and `"target": {"source": "latticium:active_blueprint", "include_air": false}`. The bridge reads the loaded in-memory placement; Latticium does not open `.litematic` files. Blueprint air is ignored unless `include_air` is true. Missing placements, unavailable chunks, and overlapping subregions remain unresolved rather than becoming air.
 

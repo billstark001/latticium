@@ -6,6 +6,7 @@ Changes intended for a public release are recorded here. Before creating a `vX.Y
 
 ### Added
 
+- Continuous, event-driven job refresh by default, an explicit manual refresh mode, and `/latticium refresh`.
 - CI for the Java core and seven Minecraft distributables.
 - IntelliJ IDEA run configuration generation and a local release bundle script.
 - Separate Modrinth publishing for the main mod and optional bridge mod.

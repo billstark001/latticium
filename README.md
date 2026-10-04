@@ -26,7 +26,7 @@ The main mod has no schematic-mod dependency. The bridge JARs require the matchi
 
 ## Client use
 
-All operations are opt-in. No profile starts scanning or acting merely because the mod is installed. In a world, set the two corners with `/latticium pos1` and `/latticium pos2`, then save them with `/latticium selection save build`. The commands `/latticium fill <item>`, `/latticium replace <source-block> <item>`, and `/latticium clear` submit finite jobs using that selection. `/latticium status`, `pause`, `resume`, and `cancel` control the current job.
+All operations are opt-in. No profile starts scanning or acting merely because the mod is installed. In a world, set the two corners with `/latticium pos1` and `/latticium pos2`, then save them with `/latticium selection save build`. The commands `/latticium fill <item>`, `/latticium replace <source-block> <item>`, and `/latticium clear` submit finite jobs using that selection. Jobs refresh continuously by default; set `policy.refresh` to `manual` for one pass. `/latticium refresh` queues a full rescan of the current job in either mode. `/latticium status`, `pause`, `resume`, and `cancel` control the current job.
 
 Place a schema-1 `.latticium.json` file in `config/latticium/profiles`, then load it with `/latticium profile load <file>`, inspect it using `/latticium preview <id>`, and start it with `/latticium start <id>`. `/latticium enable <id>` allows its declared `enter` or `while` activation; `disable` removes that permission. `/latticium query <expression>` evaluates a predicate in the saved build selection. Query and preview report a bounded partial scan with an explicit total-section count. The API entry point is `io.github.billstark001.latticium.mc.LatticiumClient`.
 
