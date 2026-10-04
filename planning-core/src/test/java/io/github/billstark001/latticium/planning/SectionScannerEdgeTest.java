@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
 import java.util.BitSet;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class SectionScannerEdgeTest {
@@ -71,5 +72,36 @@ class SectionScannerEdgeTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> new SectionScanner.SectionResult(key, trueMask, knownMask));
+  }
+
+  @Test
+  void overlappingBoundsProduceOneSectionAndOneUnknownCell() {
+    var dimension = ResourceId.parse("minecraft:overworld");
+    var first = new SectionScanner.Bounds(dimension, 1, 64, 1, 2, 64, 1);
+    var second = new SectionScanner.Bounds(dimension, 2, 64, 1, 3, 64, 1);
+    var scanner = new SectionScanner();
+    var groups = scanner.group(List.of(first, second, first), 1);
+    assertEquals(1, groups.size());
+    assertEquals(List.of(first, second), groups.getFirst().bounds());
+    var scope =
+        new Compiler.Bound(
+            SetType.POS, (facts, pos, value) -> pos.x() == 2 ? Truth.UNKNOWN : Truth.TRUE, 0);
+    var select = new Compiler.Bound(SetType.POS, (facts, pos, value) -> Truth.TRUE, 0);
+    var result = scanner.scanGroup(groups.getFirst(), scope, select, null);
+    assertEquals(2, result.trueCount());
+    assertEquals(1, result.unknownCount());
+    var anotherSection = new SectionScanner.Bounds(dimension, 16, 64, 1, 16, 64, 1);
+    assertThrows(
+        IllegalArgumentException.class, () -> scanner.group(List.of(first, anotherSection), 1));
+  }
+
+  @Test
+  void inclusiveBoundsRejectOtherDimensions() {
+    var overworld = ResourceId.parse("minecraft:overworld");
+    var box = new SectionScanner.Bounds(overworld, -1, 0, -1, 1, 2, 1);
+    assertTrue(box.contains(new Position(overworld, -1, 0, 1)));
+    assertTrue(box.contains(new Position(overworld, 1, 2, -1)));
+    assertFalse(box.contains(new Position(overworld, 2, 1, 0)));
+    assertFalse(box.contains(new Position(ResourceId.parse("minecraft:the_nether"), 0, 1, 0)));
   }
 }

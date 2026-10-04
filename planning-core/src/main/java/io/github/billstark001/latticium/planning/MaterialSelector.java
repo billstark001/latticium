@@ -7,6 +7,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -25,9 +26,17 @@ public final class MaterialSelector {
       }
     }
 
-    record Unknown(String reason) implements Outcome {}
+    record Unknown(String reason) implements Outcome {
+      public Unknown {
+        Objects.requireNonNull(reason, "reason");
+      }
+    }
 
-    record Unsupported(String reason) implements Outcome {}
+    record Unsupported(String reason) implements Outcome {
+      public Unsupported {
+        Objects.requireNonNull(reason, "reason");
+      }
+    }
   }
 
   /** Frozen target, retryable deferral, missing capability or known absence of a target. */
@@ -73,13 +82,21 @@ public final class MaterialSelector {
             .thenComparing(Comparator.<ResourceId>comparingInt(quantities::get).reversed())
             .thenComparing(ResourceId::compareTo));
     for (var item : ids) {
-      Truth itemMembership = items.contains(itemFacts, item);
+      Truth itemMembership = membership(items, itemFacts, item);
       if (itemMembership == Truth.FALSE) continue;
       if (itemMembership == Truth.UNKNOWN) {
         unknownHigherPriority = true;
         continue;
       }
-      var result = oracle.statesFor(item, pos);
+      Outcome result;
+      try {
+        result = oracle.statesFor(item, pos);
+      } catch (RuntimeException error) {
+        result =
+            new Outcome.Unknown(
+                "Placement oracle unavailable: " + error.getClass().getSimpleName());
+      }
+      if (result == null) result = new Outcome.Unknown("Placement oracle returned no result");
       if (result instanceof Outcome.Unknown) {
         unknownHigherPriority = true;
         continue;
@@ -92,7 +109,7 @@ public final class MaterialSelector {
       var candidates = new ArrayList<BlockState>();
       boolean unknownState = false;
       for (var state : s.states()) {
-        Truth membership = states == null ? Truth.TRUE : states.contains(itemFacts, state);
+        Truth membership = states == null ? Truth.TRUE : membership(states, itemFacts, state);
         if (membership == Truth.TRUE) candidates.add(state);
         else if (membership == Truth.UNKNOWN) unknownState = true;
       }
@@ -114,6 +131,14 @@ public final class MaterialSelector {
     if (unknownHigherPriority) return new Choice.Deferred("Placement facts unavailable");
     if (unsupported != null) return new Choice.Unsupported(unsupported);
     return new Choice.NoTarget("No available item has a verifiable accepted state");
+  }
+
+  private static Truth membership(Compiler.Bound bound, Facts facts, Object value) {
+    try {
+      return Objects.requireNonNull(bound.contains(facts, value));
+    } catch (RuntimeException error) {
+      return Truth.UNKNOWN;
+    }
   }
 
   private static Facts withInventory(Facts base, Set<ResourceId> available) {

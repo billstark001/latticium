@@ -5,12 +5,18 @@ import io.github.billstark001.latticium.dsl.Parser;
 import io.github.billstark001.latticium.dsl.Syntax.*;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 /** Conservative finite enumeration bounds for a validated scope expression. */
 public final class FiniteScope {
+  private static final class Unbounded extends IllegalArgumentException {
+    Unbounded(String message) {
+      super(message);
+    }
+  }
+
   private FiniteScope() {}
 
+  /** Returns inclusive finite bounds, rejecting missing selections and coordinate overflow. */
   public static List<SectionScanner.Bounds> bounds(
       String expression, Position player, Host.SelectionSource selections, Host.SessionId session) {
     return bounds(Parser.expression(expression), player, selections, session);
@@ -39,7 +45,13 @@ public final class FiniteScope {
                 ? text.value()
                 : args.getFirst() instanceof Name nameExpr ? nameExpr.value() : null;
         if (name == null) throw new IllegalArgumentException("Invalid selection name");
-        return List.copyOf(selections.finiteBounds(name, session));
+        var supplied = selections.finiteBounds(name, session);
+        if (supplied == null)
+          throw new IllegalArgumentException("Selection provider returned null: " + name);
+        var selected = List.copyOf(supplied);
+        if (selected.isEmpty())
+          throw new IllegalArgumentException("Selection unavailable or empty: " + name);
+        return selected;
       }
       if (call.name().equals("sphere") && args.size() == 2) {
         int radius = integer(args.get(1));
@@ -52,28 +64,34 @@ public final class FiniteScope {
           z = integer(point.args().get(2));
         } else if (!(args.getFirst() instanceof Name n) || !n.value().equals("player"))
           throw new IllegalArgumentException("Invalid sphere anchor");
-        return List.of(
-            new SectionScanner.Bounds(
-                player.dimension(),
-                Math.subtractExact(x, radius),
-                Math.subtractExact(y, radius),
-                Math.subtractExact(z, radius),
-                Math.addExact(x, radius),
-                Math.addExact(y, radius),
-                Math.addExact(z, radius)));
+        try {
+          return List.of(
+              new SectionScanner.Bounds(
+                  player.dimension(),
+                  Math.subtractExact(x, radius),
+                  Math.subtractExact(y, radius),
+                  Math.subtractExact(z, radius),
+                  Math.addExact(x, radius),
+                  Math.addExact(y, radius),
+                  Math.addExact(z, radius)));
+        } catch (ArithmeticException error) {
+          throw new IllegalArgumentException("Sphere bounds exceed coordinate range", error);
+        }
       }
     }
     if (expression instanceof Binary binary) {
       var left = safeBounds(binary.left(), player, selections, session);
       var right = safeBounds(binary.right(), player, selections, session);
       if (binary.operator() == '|') {
-        if (left == null || right == null)
-          throw new IllegalArgumentException("Union has no finite bounds");
+        if (left == null || right == null) throw new Unbounded("Union has no finite bounds");
         var result = new ArrayList<>(left);
         result.addAll(right);
         return List.copyOf(result);
       }
-      if (left == null) return Objects.requireNonNull(right, "Intersection has no finite bounds");
+      if (left == null) {
+        if (right == null) throw new Unbounded("Intersection has no finite bounds");
+        return right;
+      }
       if (right == null) return left;
       var result = new ArrayList<SectionScanner.Bounds>();
       for (var a : left)
@@ -87,14 +105,14 @@ public final class FiniteScope {
         }
       return List.copyOf(result);
     }
-    throw new IllegalArgumentException("Scope has no enumerable finite bounds");
+    throw new Unbounded("Scope has no enumerable finite bounds");
   }
 
   private static List<SectionScanner.Bounds> safeBounds(
       Expr expression, Position player, Host.SelectionSource selections, Host.SessionId session) {
     try {
       return bounds(expression, player, selections, session);
-    } catch (IllegalArgumentException ex) {
+    } catch (Unbounded ex) {
       return null;
     }
   }

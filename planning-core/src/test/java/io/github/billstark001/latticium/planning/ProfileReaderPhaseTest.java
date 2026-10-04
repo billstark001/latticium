@@ -11,6 +11,31 @@ import org.junit.jupiter.api.Test;
 
 class ProfileReaderPhaseTest {
   @Test
+  void referenceProfileBindsAsManualItemJob() {
+    var reader = new ProfileReader();
+    var profile =
+        reader.read(
+            """
+            {
+              "schema": 1,
+              "id": "user:stone_fill",
+              "scope": "selection(\\\"build\\\")",
+              "select": {"where": "current(s{minecraft:air})", "choose": "nearest"},
+              "target": {"items": "i{minecraft:stone}"},
+              "policy": {
+                "break": "deny",
+                "max_actions_per_tick": 1,
+                "max_actions_per_activation": 256
+              }
+            }
+            """);
+    var bound = reader.bind(profile, Compiler.symbolic());
+    assertNull(bound.activation());
+    assertEquals(SetType.POS, bound.scope().type());
+    assertEquals(SetType.ITEM, bound.items().type());
+  }
+
+  @Test
   void importedDeclarationsCannotCaptureTargetAccessFromCaller() {
     var reader = new ProfileReader();
     var profile =

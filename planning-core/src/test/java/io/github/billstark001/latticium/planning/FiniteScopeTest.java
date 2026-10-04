@@ -38,4 +38,39 @@ class FiniteScopeTest {
     assertEquals(0, box.getFirst().minX());
     assertEquals(2, box.getFirst().maxZ());
   }
+
+  @Test
+  void missingSelectionIsNotMistakenForAnUnboundedPredicate() {
+    var session = new Host.SessionId();
+    var error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                FiniteScope.bounds(
+                    "selection(\"missing\") & box(0,64,0,2,64,2)",
+                    PLAYER,
+                    (name, requested) -> List.of(),
+                    session));
+    assertTrue(error.getMessage().contains("Selection unavailable or empty: missing"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            FiniteScope.bounds(
+                "selection(\"missing\")", PLAYER, (name, requested) -> null, session));
+  }
+
+  @Test
+  void sphereBoundsReportCoordinateOverflow() {
+    var edge = new Position(DIMENSION, Integer.MAX_VALUE, 64, 0);
+    var error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                FiniteScope.bounds(
+                    "sphere(player,1)",
+                    edge,
+                    (name, requested) -> List.of(),
+                    new Host.SessionId()));
+    assertEquals("Sphere bounds exceed coordinate range", error.getMessage());
+  }
 }

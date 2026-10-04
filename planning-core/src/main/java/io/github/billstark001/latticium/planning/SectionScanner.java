@@ -4,6 +4,7 @@ import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
 import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 
@@ -21,11 +22,33 @@ public final class SectionScanner {
       if (minX > maxX || minY > maxY || minZ > maxZ)
         throw new IllegalArgumentException("Empty bounds");
     }
+
+    /** Tests inclusive membership in this box and its dimension. */
+    public boolean contains(Position pos) {
+      return dimension.equals(pos.dimension())
+          && pos.x() >= minX
+          && pos.x() <= maxX
+          && pos.y() >= minY
+          && pos.y() <= maxY
+          && pos.z() >= minZ
+          && pos.z() <= maxZ;
+    }
   }
 
   public record SectionKey(ResourceId dimension, int x, int y, int z) {
     public SectionKey {
       Objects.requireNonNull(dimension, "dimension");
+    }
+  }
+
+  /** One section with all finite bounds that can contribute cells to it. */
+  public record SectionGroup(SectionKey key, List<Bounds> bounds) {
+    public SectionGroup {
+      Objects.requireNonNull(key, "key");
+      bounds = List.copyOf(bounds);
+      if (bounds.isEmpty()
+          || bounds.stream().anyMatch(box -> !box.dimension().equals(key.dimension())))
+        throw new IllegalArgumentException("Section group needs bounds in its dimension");
     }
   }
 
@@ -134,6 +157,42 @@ public final class SectionScanner {
                   bounds, new SectionKey(bounds.dimension(), sx, sy, sz), scope, select, facts));
         }
     return List.copyOf(results);
+  }
+
+  /** Enumerates distinct sections while retaining all overlapping bounds for mask union. */
+  public List<SectionGroup> group(List<Bounds> bounds, int maxSections) {
+    if (maxSections <= 0) throw new IllegalArgumentException("Positive section budget required");
+    var grouped = new LinkedHashMap<SectionKey, ArrayList<Bounds>>();
+    for (var box : bounds)
+      for (int y = Math.floorDiv(box.minY(), SECTION_SIZE);
+          y <= Math.floorDiv(box.maxY(), SECTION_SIZE);
+          y++)
+        for (int z = Math.floorDiv(box.minZ(), SECTION_SIZE);
+            z <= Math.floorDiv(box.maxZ(), SECTION_SIZE);
+            z++)
+          for (int x = Math.floorDiv(box.minX(), SECTION_SIZE);
+              x <= Math.floorDiv(box.maxX(), SECTION_SIZE);
+              x++) {
+            var key = new SectionKey(box.dimension(), x, y, z);
+            var contributions = grouped.computeIfAbsent(key, ignored -> new ArrayList<>(1));
+            if (!contributions.contains(box)) contributions.add(box);
+            if (grouped.size() > maxSections)
+              throw new IllegalArgumentException("Scope exceeds " + maxSections + " sections");
+          }
+    var result = new ArrayList<SectionGroup>(grouped.size());
+    grouped.forEach((key, contributions) -> result.add(new SectionGroup(key, contributions)));
+    return List.copyOf(result);
+  }
+
+  /** Unions the three-valued masks from a section's contributing finite bounds. */
+  public SectionResult scanGroup(
+      SectionGroup group, Compiler.Bound scope, Compiler.Bound select, Facts facts) {
+    SectionResult result = null;
+    for (var box : group.bounds()) {
+      var part = scanSection(box, group.key(), scope, select, facts);
+      result = result == null ? part : result.or(part);
+    }
+    return Objects.requireNonNull(result);
   }
 
   /**

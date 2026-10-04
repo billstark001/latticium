@@ -188,4 +188,56 @@ class MaterialSelectorEdgeTest {
                     new MaterialSelector.Outcome.States(Set.of(new BlockState(stone, Map.of()))));
     assertEquals(stone, assertInstanceOf(MaterialSelector.Choice.Frozen.class, choice).item());
   }
+
+  @Test
+  void brokenMaterialFactsAndOracleDeferTheChoice() {
+    var stone = ResourceId.parse("minecraft:stone");
+    var position = new Position(ResourceId.parse("minecraft:overworld"), 0, 0, 0);
+    var current = new BlockState(ResourceId.parse("minecraft:air"), Map.of());
+    var items = new Compiler.Bound(SetType.ITEM, (facts, pos, value) -> Truth.TRUE, 0);
+    var brokenItems =
+        new Compiler.Bound(
+            SetType.ITEM,
+            (facts, pos, value) -> {
+              throw new IllegalStateException("missing facts");
+            },
+            0);
+    var selector = new MaterialSelector();
+    assertInstanceOf(
+        MaterialSelector.Choice.Deferred.class,
+        selector.choose(
+            position,
+            current,
+            brokenItems,
+            null,
+            null,
+            Map.of(stone, 1),
+            List.of(),
+            (item, pos) -> fail("Oracle should not run")));
+    assertInstanceOf(
+        MaterialSelector.Choice.Deferred.class,
+        selector.choose(
+            position,
+            current,
+            items,
+            null,
+            null,
+            Map.of(stone, 1),
+            List.of(),
+            (item, pos) -> {
+              throw new IllegalStateException("mod oracle failed");
+            }));
+    assertInstanceOf(
+        MaterialSelector.Choice.Deferred.class,
+        selector.choose(
+            position,
+            current,
+            items,
+            null,
+            null,
+            Map.of(stone, 1),
+            List.of(),
+            (item, pos) -> null));
+    assertThrows(NullPointerException.class, () -> new MaterialSelector.Outcome.Unknown(null));
+  }
 }

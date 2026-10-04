@@ -143,7 +143,11 @@ public final class Model {
 
     record DontCare() implements TargetCell {}
 
-    record Unknown(String reason) implements TargetCell {}
+    record Unknown(String reason) implements TargetCell {
+      public Unknown {
+        Objects.requireNonNull(reason, "reason");
+      }
+    }
   }
 
   /** Null fields mean that the corresponding world fact was not captured. */

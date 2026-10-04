@@ -29,6 +29,7 @@ class JobControllerTest {
             new Planner.Result.Ready(stone, List.of(breakStep), breakStep.cost()),
             true);
     var snapshot = new Host.Snapshot(session, new Host.Epochs(0, 0, 0, 0, 0, 0), null);
+    assertEquals(stone, controller.confirmedState());
     controller.submit(
         snapshot,
         stone,
@@ -39,6 +40,7 @@ class JobControllerTest {
     assertEquals(JobController.Status.WAITING, controller.status());
     controller.observe((receipt, expected) -> Host.Observation.CONFIRMED);
     assertEquals(JobController.Status.REPLAN, controller.status());
+    assertEquals(air, controller.confirmedState());
   }
 
   @Test
@@ -126,6 +128,7 @@ class JobControllerTest {
         snapshot, air, (step, preconditions, policy) -> fail("Stale step must not submit"));
     assertEquals(JobController.Status.BLOCKED, controller.status());
     assertEquals(1, controller.confirmedSteps());
+    assertEquals(stone, controller.confirmedState());
   }
 
   @Test

@@ -105,4 +105,57 @@ class PlannerEdgeTest {
                 (pos, current, goal) -> fail("Already clear; no prediction needed"),
                 1));
   }
+
+  @Test
+  void remainingActivationBudgetCannotStartAnUnfinishablePlan() {
+    var policy = new Profile.Policy(Profile.Policy.BreakMode.DENY, 1, 3);
+    Planner.Oracle oracle =
+        (position, current, goal) ->
+            new Planner.Prediction.Proposals(
+                List.of(current.equals(START) ? step(CHEAP, 0) : step(GOAL, 0)));
+    var planner = new Planner();
+    var target = new TargetCell.Exact(GOAL);
+    assertInstanceOf(
+        Planner.Result.Ready.class, planner.plan(POSITION, START, target, policy, oracle, 4));
+    assertInstanceOf(
+        Planner.Result.NoPlan.class,
+        planner.plan(POSITION, START, target, policy.afterActions(2), oracle, 4));
+    assertThrows(IllegalArgumentException.class, () -> policy.afterActions(3));
+    assertThrows(IllegalArgumentException.class, () -> policy.afterActions(-1));
+  }
+
+  @Test
+  void brokenOracleDefersInsteadOfAbortingSearch() {
+    var planner = new Planner();
+    var policy = new Profile.Policy(Profile.Policy.BreakMode.DENY, 1, 2);
+    var target = new TargetCell.Exact(GOAL);
+    var nullResult = planner.plan(POSITION, START, target, policy, (pos, current, goal) -> null, 2);
+    var thrownResult =
+        planner.plan(
+            POSITION,
+            START,
+            target,
+            policy,
+            (pos, current, goal) -> {
+              throw new IllegalStateException("provider failed");
+            },
+            2);
+    assertInstanceOf(Planner.Result.Deferred.class, nullResult);
+    assertInstanceOf(Planner.Result.Deferred.class, thrownResult);
+  }
+
+  @Test
+  void searchLimitCannotBeMistakenForNoLegalPath() {
+    var planner = new Planner();
+    var policy = new Profile.Policy(Profile.Policy.BreakMode.SELECTED, 1, 3);
+    var target = new TargetCell.Exact(GOAL);
+    Planner.Oracle oracle =
+        (position, current, goal) ->
+            new Planner.Prediction.Proposals(
+                List.of(step(current.equals(START) ? CHEAP : GOAL, 0)));
+    assertInstanceOf(
+        Planner.Result.Deferred.class, planner.plan(POSITION, START, target, policy, oracle, 1));
+    assertInstanceOf(
+        Planner.Result.Ready.class, planner.plan(POSITION, START, target, policy, oracle, 2));
+  }
 }

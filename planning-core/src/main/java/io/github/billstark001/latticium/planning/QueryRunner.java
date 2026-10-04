@@ -15,9 +15,6 @@ import java.util.Set;
 public final class QueryRunner {
   private static final Set<String> TERMINAL_KINDS = Set.of("query", "count", "exists");
 
-  // Three squared components at this bound still fit in a signed long.
-  private static final long MAX_SAFE_DISTANCE_COMPONENT = 1_700_000_000L;
-
   private record Match(
       Object value, long sequence, String idKey, long distanceLong, BigInteger distanceBig) {}
 
@@ -189,16 +186,10 @@ public final class QueryRunner {
     String idKey = needsIdKey ? idKey(value) : null;
     if (player == null) return new Match(value, sequence, idKey, 0, null);
     var p = (Position) value;
-    long x = (long) p.x() - player.x(),
-        y = (long) p.y() - player.y(),
-        z = (long) p.z() - player.z();
-    if (Math.abs(x) <= MAX_SAFE_DISTANCE_COMPONENT
-        && Math.abs(y) <= MAX_SAFE_DISTANCE_COMPONENT
-        && Math.abs(z) <= MAX_SAFE_DISTANCE_COMPONENT)
-      return new Match(value, sequence, idKey, x * x + y * y + z * z, null);
-    BigInteger bx = BigInteger.valueOf(x), by = BigInteger.valueOf(y), bz = BigInteger.valueOf(z);
-    return new Match(
-        value, sequence, idKey, 0, bx.multiply(bx).add(by.multiply(by)).add(bz.multiply(bz)));
+    long distance = PositionDistances.squaredIfLong(p, player);
+    return distance >= 0
+        ? new Match(value, sequence, idKey, distance, null)
+        : new Match(value, sequence, idKey, 0, PositionDistances.squaredExact(p, player));
   }
 
   private static int compareDistance(Match left, Match right) {

@@ -96,6 +96,11 @@ public final class JobController {
     return next;
   }
 
+  /** State observed after the last confirmed step, or the initial state before any step. */
+  public BlockState confirmedState() {
+    return next == 0 ? initial : steps.get(next - 1).result();
+  }
+
   /** Pauses before the next submission; an accepted action still waits for observation. */
   public void pause() {
     if (status == Status.READY) status = Status.PAUSED;

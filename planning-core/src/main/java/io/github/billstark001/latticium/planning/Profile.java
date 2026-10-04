@@ -91,6 +91,13 @@ public record Profile(
       if (maxActionsPerTick <= 0 || maxActionsPerActivation <= 0)
         throw new IllegalArgumentException("Action budgets must be positive");
     }
+
+    /** Returns the policy for the actions still available in this activation. */
+    public Policy afterActions(int submittedActions) {
+      if (submittedActions < 0 || submittedActions >= maxActionsPerActivation)
+        throw new IllegalArgumentException("No remaining action budget");
+      return new Policy(breakMode, maxActionsPerTick, maxActionsPerActivation - submittedActions);
+    }
   }
 
   /** Compiled fields; absent activation and target-specific expressions remain null. */

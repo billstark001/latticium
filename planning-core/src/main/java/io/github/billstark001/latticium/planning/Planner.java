@@ -96,7 +96,7 @@ public final class Planner {
   }
 
   public interface Oracle {
-    /** Predicts legal transitions from one state without performing an action. */
+    /** Predicts legal transitions from one state without performing an action. Failure defers. */
     Prediction predict(Position pos, BlockState current, TargetCell goal);
   }
 
@@ -158,8 +158,9 @@ public final class Planner {
   /**
    * Searches legal single-cell transitions in lexicographic cost order. {@code maxNodes} limits
    * expanded states; the policy limits action count. A ready path is cheapest among known
-   * transitions; unknown predictions may hide alternatives. If no known path exists, missing facts
-   * yield Deferred. The returned steps are proposals, never confirmed actions.
+   * transitions; unknown predictions may hide alternatives. Missing facts or an exhausted node
+   * budget yield Deferred rather than proving that no path exists. The returned steps are
+   * proposals, never confirmed actions.
    */
   public Result plan(
       Position pos,
@@ -189,8 +190,15 @@ public final class Planner {
       if (!node.cost().equals(best.get(node.state()))) continue;
       // A goal is optimal only when it leaves the cost-ordered queue.
       if (matches(node.state(), goal)) return new Result.Ready(current, pathTo(node), node.cost());
-      if (visited++ >= maxNodes) return new Result.NoPlan("Search budget exhausted");
-      var prediction = oracle.predict(pos, node.state(), goal);
+      if (visited++ >= maxNodes) return new Result.Deferred("Search budget exhausted");
+      Prediction prediction;
+      try {
+        prediction = Objects.requireNonNull(oracle.predict(pos, node.state(), goal));
+      } catch (RuntimeException error) {
+        if (unknownReason == null)
+          unknownReason = "Placement oracle unavailable: " + error.getClass().getSimpleName();
+        continue;
+      }
       if (prediction instanceof Prediction.Unknown x) {
         if (unknownReason == null) unknownReason = x.reason();
         continue;

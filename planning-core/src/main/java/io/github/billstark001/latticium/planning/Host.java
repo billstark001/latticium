@@ -5,10 +5,11 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Neutral contracts implemented by a future client adapter or a fake offline host. */
+/** Neutral contracts for the client adapters and fake offline hosts. */
 public final class Host {
   private Host() {}
 
+  /** Identity for one capture or job lifetime; stale snapshots must not cross sessions. */
   public record SessionId(UUID value) {
     public SessionId {
       Objects.requireNonNull(value, "value");
