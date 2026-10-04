@@ -1,0 +1,12 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="All rights reserved"
+
+[[mods]]
+modId="latticium"
+version="0.1.0"
+displayName="Latticium"
+description="Client construction engine"
+
+[[mixins]]
+config="latticium.mixins.json"
