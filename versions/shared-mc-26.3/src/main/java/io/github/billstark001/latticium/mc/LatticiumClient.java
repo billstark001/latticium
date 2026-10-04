@@ -54,6 +54,10 @@ public final class LatticiumClient {
   private ClientJob job;
   private final List<ClientJob> settling = new ArrayList<>();
   private String activeAutoId;
+  private Position lastActivationPlayer;
+  private int lastActivationRadius;
+  private boolean activationDirty = true;
+  private long activationTicks;
   private Path storagePath;
   private String storageError = "";
   private BlockPos firstCorner;
@@ -106,6 +110,10 @@ public final class LatticiumClient {
       autoTrackers.clear();
       autoErrors.clear();
       activeAutoId = null;
+      lastActivationPlayer = null;
+      lastActivationRadius = 0;
+      activationDirty = true;
+      activationTicks = 0;
       serverUpdates.clear();
       serverUpdateSequence = 0;
       firstCorner = null;
@@ -114,12 +122,18 @@ public final class LatticiumClient {
     if (job != null) job.tick();
     settling.forEach(ClientJob::tick);
     settling.removeIf(ClientJob::isSettled);
+    activationTicks++;
     sampleActivations(minecraft);
   }
 
   private void sampleActivations(Minecraft minecraft) {
     if (enabled.isEmpty() || session == null || minecraft.player == null) return;
     if (job != null && !job.isFinished() && activeAutoId == null) return;
+    var feet = minecraft.player.blockPosition();
+    var dimension = MinecraftStateCodec.id(minecraft.level.dimension().identifier());
+    var center = new Position(dimension, feet.getX(), feet.getY(), feet.getZ());
+    if (!activationDirty && center.equals(lastActivationPlayer) && activationTicks % 200 != 0)
+      return;
     int radius = 0;
     boolean hasActivation = false;
     for (var id : enabled.stream().sorted().toList()) {
@@ -142,9 +156,9 @@ public final class LatticiumClient {
       }
     }
     if (!hasActivation) return;
-    var feet = minecraft.player.blockPosition();
-    var dimension = MinecraftStateCodec.id(minecraft.level.dimension().identifier());
-    var center = new Position(dimension, feet.getX(), feet.getY(), feet.getZ());
+    lastActivationPlayer = center;
+    lastActivationRadius = radius;
+    activationDirty = false;
     var capture =
         new MinecraftSectionSource(
                 minecraft, session, new Host.Epochs(0, 0, 0, 0, 0, 0), null, selections)
@@ -188,9 +202,15 @@ public final class LatticiumClient {
     var minecraft = Minecraft.getInstance();
     if (!minecraft.isSameThread() || world == null || world != minecraft.level) return;
     var dimension = MinecraftStateCodec.id(world.dimension().identifier());
-    serverUpdates.put(
-        new Position(dimension, blockPos.getX(), blockPos.getY(), blockPos.getZ()),
-        ++serverUpdateSequence);
+    var position = new Position(dimension, blockPos.getX(), blockPos.getY(), blockPos.getZ());
+    serverUpdates.put(position, ++serverUpdateSequence);
+    if (job != null) job.noteBlockUpdate(position);
+    if (lastActivationPlayer != null
+        && lastActivationPlayer.dimension().equals(position.dimension())
+        && Math.abs((long) position.x() - lastActivationPlayer.x()) <= lastActivationRadius
+        && Math.abs((long) position.y() - lastActivationPlayer.y()) <= lastActivationRadius
+        && Math.abs((long) position.z() - lastActivationPlayer.z()) <= lastActivationRadius)
+      activationDirty = true;
   }
 
   long serverRevision(Position pos) {
@@ -221,6 +241,7 @@ public final class LatticiumClient {
       else selections.put(name, previous);
       throw error;
     }
+    activationDirty = true;
   }
 
   /** Saves a parsed profile for the current world; live binding occurs when enabled or started. */
@@ -238,6 +259,7 @@ public final class LatticiumClient {
     }
     autoBindings.remove(id);
     autoTrackers.remove(id);
+    activationDirty = true;
   }
 
   public void setEnabled(Minecraft minecraft, String id, boolean value) {
@@ -253,6 +275,7 @@ public final class LatticiumClient {
       autoBindings.remove(id);
       autoTrackers.remove(id);
       autoErrors.remove(id);
+      activationDirty = true;
       if (id.equals(activeAutoId)) cancel();
       return;
     }
@@ -271,6 +294,7 @@ public final class LatticiumClient {
     autoBindings.put(id, bound);
     autoTrackers.put(id, new ActivationTracker());
     autoErrors.remove(id);
+    activationDirty = true;
   }
 
   /** Binds a profile to the live 26.2/26.3 registry without starting it. */
@@ -389,6 +413,13 @@ public final class LatticiumClient {
 
   public void resume() {
     if (job != null) job.resume();
+  }
+
+  /** Requests a bounded rescan now, even for a profile with manual refresh mode. */
+  public void refresh() {
+    requireWorld(Minecraft.getInstance());
+    if (job == null) throw new IllegalStateException("No job to refresh");
+    job.refresh();
   }
 
   public void cancel() {

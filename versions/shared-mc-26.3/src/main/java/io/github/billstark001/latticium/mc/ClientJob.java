@@ -6,7 +6,6 @@ import io.github.billstark001.latticium.dsl.Parser;
 import io.github.billstark001.latticium.dsl.TargetReads;
 import io.github.billstark001.latticium.planning.*;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -18,12 +17,12 @@ import net.minecraft.core.registries.BuiltInRegistries;
 
 /** One finite profile activation, scanned and acted on in bounded client ticks. */
 public final class ClientJob {
-  private static final int MAX_JOB_SECTIONS = 65_536;
   private static final int MAX_PLANNER_NODES = 128;
   private static final long RETRY_TICKS = 20;
   private static final long NO_PLAN_RETRY_TICKS = 40;
   private static final SectionScanner SCANNER = new SectionScanner();
   private static final BlockState AIR = new BlockState(ResourceId.parse("minecraft:air"), Map.of());
+  private static final Host.Epochs EPOCHS = new Host.Epochs(0, 0, 0, 0, 0, 0);
 
   /** A bounded read-only estimate; unscanned and unavailable sections remain explicit. */
   public record Preview(
@@ -38,8 +37,7 @@ public final class ClientJob {
   private final Profile.Bound profile;
   private final ClientTargetResolver targetResolver;
   private final Map<String, List<SectionScanner.Bounds>> selections;
-  private final List<SectionScanner.SectionGroup> sections;
-  private final List<SectionScanner.SectionGroup> deferredSections = new ArrayList<>();
+  private final RefreshCoordinator refresh;
   private final MinecraftPlacementOracle oracle;
   private final MinecraftSectionSource sectionSource;
   private final MinecraftActionGateway gateway;
@@ -49,11 +47,9 @@ public final class ClientJob {
   private final Map<Position, BlockState> partialExpected = new HashMap<>();
   private final Map<Position, String> blocked = new HashMap<>();
   private final Map<Position, Long> retryAfter = new HashMap<>();
-  private int nextSection;
   private int completed;
   private int submittedActions;
   private int submittedThisTick;
-  private int unsupportedSections;
   private long ticks;
   private boolean paused;
   private boolean cancelled;
@@ -83,36 +79,21 @@ public final class ClientJob {
             feet.getX(),
             feet.getY(),
             feet.getZ());
-    var selectionSource =
-        (Host.SelectionSource)
-            (name, requestedSession) ->
-                session.equals(requestedSession)
-                    ? this.selections.getOrDefault(name, List.of())
-                    : List.of();
-    var bounds = FiniteScope.bounds(parsed.scope(), anchor, selectionSource, session);
-    if (bounds.stream().anyMatch(box -> !box.dimension().equals(anchor.dimension())))
-      throw new IllegalArgumentException("Scope includes another dimension");
-    sections = SCANNER.group(bounds, MAX_JOB_SECTIONS);
+    refresh = new RefreshCoordinator(profile, session, this.selections, anchor);
     oracle = new MinecraftPlacementOracle(minecraft);
     targetResolver = new ClientTargetResolver(minecraft, session, profile, targets, oracle);
     var targetSource = targetResolver.targetSource();
     var scanTargets =
         TargetReads.in(Parser.expression(parsed.select().where())) ? targetSource : null;
     sectionSource =
-        new MinecraftSectionSource(minecraft, session, epochs(), scanTargets, this.selections);
+        new MinecraftSectionSource(minecraft, session, EPOCHS, scanTargets, this.selections);
     gateway =
         new MinecraftActionGateway(
-            minecraft, session, this::epochs, targetSource, profile.items(), this.selections);
-  }
-
-  private Host.Epochs epochs() {
-    return new Host.Epochs(0, 0, 0, 0, 0, 0);
+            minecraft, session, () -> EPOCHS, targetSource, profile.items(), this.selections);
   }
 
   private Host.Capture capture(SectionScanner.SectionKey key) {
-    return sectionSource.capture(
-        new Host.SectionCaptureKey(session, key),
-        Math.max(profile.scope().radius(), profile.select().radius()));
+    return sectionSource.capture(new Host.SectionCaptureKey(session, key), refresh.readRadius());
   }
 
   public void tick() {
@@ -139,16 +120,24 @@ public final class ClientJob {
         activePosition = null;
       } else if (active.status() == JobController.Status.READY && !paused) submitActive();
     }
-    if (paused) return;
     if (active != null) return;
+    var feet = minecraft.player.blockPosition();
+    refresh.playerMoved(
+        new Position(
+            MinecraftStateCodec.id(minecraft.level.dimension().identifier()),
+            feet.getX(),
+            feet.getY(),
+            feet.getZ()));
+    refresh.periodicRefresh(ticks);
+    for (var dirty : refresh.nextDirtyPositions(ticks, 8)) refreshCandidate(dirty);
+    var next = refresh.nextSection(ticks);
+    if (next != null) scan(next);
     if (submittedActions >= profile.profile().policy().maxActionsPerActivation()) {
       budgetExhausted = true;
       return;
     }
-    if (!deferredSections.isEmpty() && ticks % RETRY_TICKS == 0)
-      scan(deferredSections.removeFirst());
-    else if (nextSection < sections.size()) scan(sections.get(nextSection++));
-    if (!pending.isEmpty()
+    if (!paused
+        && !pending.isEmpty()
         && submittedActions < profile.profile().policy().maxActionsPerActivation()) planNext();
   }
 
@@ -157,9 +146,9 @@ public final class ClientJob {
     int known = 0;
     int unknown = 0;
     int unavailable = 0;
-    int scanned = Math.min(maxSections, sections.size());
+    int scanned = Math.min(maxSections, refresh.sectionCount());
     for (int index = 0; index < scanned; index++) {
-      var section = sections.get(index);
+      var section = refresh.sections().get(index);
       var capture = capture(section.key());
       if (!(capture instanceof Host.Capture.Ready ready)) {
         unavailable++;
@@ -170,22 +159,22 @@ public final class ClientJob {
       unknown += mask.unknownCount();
       known += mask.trueCount();
     }
-    return new Preview(scanned, sections.size(), unavailable, known, unknown);
+    return new Preview(scanned, refresh.sectionCount(), unavailable, known, unknown);
   }
 
   private void scan(SectionScanner.SectionGroup section) {
     var result = capture(section.key());
     if (result instanceof Host.Capture.Unsupported) {
-      unsupportedSections++;
+      refresh.unsupportedSection();
       return;
     }
     if (!(result instanceof Host.Capture.Ready ready)) {
-      deferredSections.add(section);
+      refresh.deferSection(section);
       return;
     }
     var mask =
         SCANNER.scanGroup(section, profile.scope(), profile.select(), ready.snapshot().facts());
-    if (mask.unknownCount() > 0) deferredSections.add(section);
+    if (mask.unknownCount() > 0) refresh.deferSection(section);
     var candidates = mask.trueMask();
     for (int i = candidates.nextSetBit(0); i >= 0; i = candidates.nextSetBit(i + 1)) {
       var pos =
@@ -195,11 +184,41 @@ public final class ClientJob {
               (section.key().y() << 4) + (i >> 8),
               (section.key().z() << 4) + ((i >> 4) & 15));
       if (claimed.add(pos)) pending.add(pos);
+      else if (!partialExpected.containsKey(pos)) frozen.remove(pos);
     }
   }
 
+  private void refreshCandidate(Position pos) {
+    if (pos.equals(activePosition)) {
+      refresh.deferPosition(pos, ticks);
+      return;
+    }
+    var capture = sectionSource.captureAround(session, pos, refresh.readRadius());
+    if (!(capture instanceof Host.Capture.Ready ready)) {
+      refresh.deferPosition(pos, ticks);
+      return;
+    }
+    var eligible = selectionAt(profile, ready.snapshot().facts(), pos);
+    if (eligible == Truth.TRUE) {
+      if (claimed.add(pos)) pending.add(pos);
+      else if (!partialExpected.containsKey(pos)) frozen.remove(pos);
+      blocked.remove(pos);
+    } else if (eligible == Truth.FALSE) {
+      if (claimed.contains(pos)) dropCandidate(pos);
+      blocked.remove(pos);
+    } else refresh.deferPosition(pos, ticks);
+  }
+
   private void planNext() {
-    var order = comparator();
+    var player = minecraft.player.blockPosition();
+    var order =
+        ClientJobView.order(
+            profile.profile().select().choose(),
+            new Position(
+                MinecraftStateCodec.id(minecraft.level.dimension().identifier()),
+                player.getX(),
+                player.getY(),
+                player.getZ()));
     Position pos = null;
     for (var candidate : pending)
       if (retryAfter.getOrDefault(candidate, 0L) <= ticks
@@ -252,7 +271,7 @@ public final class ClientJob {
       blocked.remove(pos);
       frozen.put(pos, target);
     }
-    if (target instanceof TargetCell.DontCare || matches(current, target)) {
+    if (target instanceof TargetCell.DontCare || ClientJobView.matches(current, target)) {
       blocked.remove(pos);
       dropCandidate(pos);
       completed++;
@@ -270,7 +289,7 @@ public final class ClientJob {
                 MAX_PLANNER_NODES);
     boolean partial = false;
     if (result instanceof Planner.Result.NoPlan
-        && !isAir(current)
+        && !ClientJobView.isAir(current)
         && remainingPolicy.breakMode() == Profile.Policy.BreakMode.SELECTED) {
       if (!ClientTargetResolver.hasReplacementBudget(target, remainingPolicy)) {
         blocked.put(pos, "Replacement needs at least two remaining actions");
@@ -360,9 +379,19 @@ public final class ClientJob {
       activePosition = null;
       return;
     }
+    if (active.confirmedSteps() == 0) {
+      var check = sectionSource.captureAround(session, pos, refresh.readRadius());
+      if (!(check instanceof Host.Capture.Ready ready)
+          || selectionAt(profile, ready.snapshot().facts(), pos) != Truth.TRUE) {
+        retryAfter.put(pos, ticks + RETRY_TICKS);
+        active = null;
+        activePosition = null;
+        return;
+      }
+    }
     var current =
         MinecraftStateCodec.state(level.getBlockState(new BlockPos(pos.x(), pos.y(), pos.z())));
-    active.submit(new Host.Snapshot(session, epochs(), null), current, gateway);
+    active.submit(new Host.Snapshot(session, EPOCHS, null), current, gateway);
     if (active.status() == JobController.Status.WAITING) {
       submittedThisTick++;
       submittedActions++;
@@ -383,6 +412,7 @@ public final class ClientJob {
 
   private void dropCandidate(Position pos) {
     pending.remove(pos);
+    claimed.remove(pos);
     frozen.remove(pos);
     partialExpected.remove(pos);
     retryAfter.remove(pos);
@@ -393,63 +423,16 @@ public final class ClientJob {
     return inScope == Truth.FALSE ? Truth.FALSE : inScope.and(profile.select().at(facts, pos));
   }
 
-  private Comparator<Position> comparator() {
-    var player = minecraft.player.blockPosition();
-    var origin =
-        new Position(
-            MinecraftStateCodec.id(minecraft.level.dimension().identifier()),
-            player.getX(),
-            player.getY(),
-            player.getZ());
-    Comparator<Position> yzx =
-        Comparator.comparingInt(Position::y)
-            .thenComparingInt(Position::z)
-            .thenComparingInt(Position::x);
-    Comparator<Position> distance = (a, b) -> PositionDistances.compare(a, b, origin);
-    return switch (profile.profile().select().choose()) {
-      case NEAREST -> distance.thenComparing(yzx);
-      case FARTHEST -> distance.reversed().thenComparing(yzx);
-      case Y_ASC -> yzx;
-      case Y_DESC -> yzx.reversed();
-      case SCAN -> (a, b) -> 0;
-    };
-  }
-
-  private static boolean isAir(BlockState state) {
-    return io.github.billstark001.latticium.dsl.Model.isVanillaAir(state);
-  }
-
-  private static boolean matches(BlockState current, TargetCell target) {
-    return target instanceof TargetCell.Exact exact && current.equals(exact.state())
-        || target instanceof TargetCell.Clear && isAir(current);
-  }
-
   public String status() {
-    var example =
-        blocked.entrySet().stream()
-            .min(Comparator.comparing(entry -> entry.getKey().toString()))
-            .orElse(null);
-    return "scanned="
-        + nextSection
-        + "/"
-        + sections.size()
-        + " pending="
-        + pending.size()
-        + " completed="
-        + completed
-        + " actions="
-        + submittedActions
-        + "/"
-        + profile.profile().policy().maxActionsPerActivation()
-        + " deferredSections="
-        + deferredSections.size()
-        + " unsupportedSections="
-        + unsupportedSections
-        + " blocked="
-        + blocked.size()
-        + (example == null ? "" : " firstBlocked=" + example.getKey() + ": " + example.getValue())
-        + (budgetExhausted ? " budgetExhausted=true" : "")
-        + (active == null ? "" : " active=" + active.status());
+    return ClientJobView.status(
+        refresh,
+        pending.size(),
+        completed,
+        submittedActions,
+        profile.profile().policy().maxActionsPerActivation(),
+        blocked,
+        budgetExhausted,
+        active);
   }
 
   public Map<Position, String> blocked() {
@@ -457,10 +440,29 @@ public final class ClientJob {
   }
 
   public boolean isFinished() {
-    return !cancelled
-        && active == null
-        && (budgetExhausted
-            || pending.isEmpty() && nextSection == sections.size() && deferredSections.isEmpty());
+    return ClientJobView.isFinished(cancelled, active, budgetExhausted, refresh, pending.isEmpty());
+  }
+
+  public void noteBlockUpdate(Position pos) {
+    if (!cancelled && !budgetExhausted) refresh.blockChanged(pos);
+  }
+
+  public void refresh() {
+    if (cancelled) throw new IllegalStateException("Job was cancelled");
+    if (budgetExhausted && active == null) {
+      submittedActions = 0;
+      budgetExhausted = false;
+    }
+    frozen.keySet().removeIf(pos -> !partialExpected.containsKey(pos));
+    retryAfter.clear();
+    blocked.clear();
+    var feet = minecraft.player.blockPosition();
+    refresh.requestFullRefresh(
+        new Position(
+            MinecraftStateCodec.id(minecraft.level.dimension().identifier()),
+            feet.getX(),
+            feet.getY(),
+            feet.getZ()));
   }
 
   public void pause() {
