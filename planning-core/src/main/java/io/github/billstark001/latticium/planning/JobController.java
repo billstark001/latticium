@@ -13,6 +13,7 @@ public final class JobController {
     WAITING,
     PAUSED,
     COMPLETE,
+    REPLAN,
     BLOCKED,
     CANCELLED
   }
@@ -23,6 +24,7 @@ public final class JobController {
   private final TargetCell target;
   private final BlockState initial;
   private final List<Planner.Proposal> steps;
+  private final boolean partial;
   private int next;
   private Host.Receipt receipt;
   private Status status = Status.READY;
@@ -36,12 +38,24 @@ public final class JobController {
       Position position,
       TargetCell target,
       Planner.Result.Ready plan) {
+    this(session, policy, position, target, plan, false);
+  }
+
+  /** A partial plan must be rescanned and replanned after its final observed step. */
+  public JobController(
+      Host.SessionId session,
+      Profile.Policy policy,
+      Position position,
+      TargetCell target,
+      Planner.Result.Ready plan,
+      boolean partial) {
     this.session = Objects.requireNonNull(session);
     this.policy = Objects.requireNonNull(policy);
     this.position = Objects.requireNonNull(position);
     this.target = Objects.requireNonNull(target);
     this.initial = Objects.requireNonNull(plan.initial());
     this.steps = plan.steps();
+    this.partial = partial;
     if (steps.isEmpty()) throw new IllegalArgumentException("Empty action plan");
     if (reaches(initial, target))
       throw new IllegalArgumentException("Action plan starts at its target");
@@ -54,7 +68,7 @@ public final class JobController {
         throw new IllegalArgumentException("Action plan continues after reaching its target");
       before = step.result();
     }
-    if (!reaches(steps.getLast().result(), target))
+    if (!partial && !reaches(steps.getLast().result(), target))
       throw new IllegalArgumentException("Action plan does not reach its target");
     long actions = 0;
     for (var step : steps) actions += step.cost().actions();
@@ -177,7 +191,7 @@ public final class JobController {
             cancelRequested
                 ? Status.CANCELLED
                 : next == steps.size()
-                    ? Status.COMPLETE
+                    ? partial ? Status.REPLAN : Status.COMPLETE
                     : pauseRequested ? Status.PAUSED : Status.READY;
       }
       case STILL_PENDING -> {}

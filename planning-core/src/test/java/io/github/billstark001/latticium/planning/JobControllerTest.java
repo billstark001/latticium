@@ -11,6 +11,37 @@ import org.junit.jupiter.api.Test;
 
 class JobControllerTest {
   @Test
+  void replacementBreakRequiresObservationBeforeReplanning() {
+    var session = new Host.SessionId();
+    var pos = new Position(ResourceId.parse("minecraft:overworld"), 1, 64, 1);
+    var stone = new BlockState(ResourceId.parse("minecraft:stone"), Map.of());
+    var dirt = new BlockState(ResourceId.parse("minecraft:dirt"), Map.of());
+    var air = new BlockState(ResourceId.parse("minecraft:air"), Map.of());
+    var breakStep =
+        new Planner.Proposal(
+            Planner.Action.BREAK, air, Set.of(pos), new Planner.Cost(1, 0, 1), "ordinary_break");
+    var controller =
+        new JobController(
+            session,
+            new Profile.Policy(Profile.Policy.BreakMode.SELECTED, 1, 8),
+            pos,
+            new TargetCell.Exact(dirt),
+            new Planner.Result.Ready(stone, List.of(breakStep), breakStep.cost()),
+            true);
+    var snapshot = new Host.Snapshot(session, new Host.Epochs(0, 0, 0, 0, 0, 0), null);
+    controller.submit(
+        snapshot,
+        stone,
+        (step, before, policy) ->
+            new Host.Submission.Accepted(new Host.Receipt(UUID.randomUUID(), session)));
+    assertEquals(JobController.Status.WAITING, controller.status());
+    controller.observe((receipt, expected) -> Host.Observation.STILL_PENDING);
+    assertEquals(JobController.Status.WAITING, controller.status());
+    controller.observe((receipt, expected) -> Host.Observation.CONFIRMED);
+    assertEquals(JobController.Status.REPLAN, controller.status());
+  }
+
+  @Test
   void acceptedActionNeedsObservationAndCancellationSettlesReceipt() {
     var session = new Host.SessionId();
     var pos = new Position(ResourceId.parse("minecraft:overworld"), 0, 0, 0);

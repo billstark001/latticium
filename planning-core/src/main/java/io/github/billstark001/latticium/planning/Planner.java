@@ -20,6 +20,31 @@ public final class Planner {
     BREAK
   }
 
+  /** A concrete normal-player interaction, chosen by a version-specific oracle. */
+  public record Interaction(
+      int inventorySlot, Face face, double hitX, double hitY, double hitZ, Position clicked) {
+    public Interaction(int inventorySlot, Face face, double hitX, double hitY, double hitZ) {
+      this(inventorySlot, face, hitX, hitY, hitZ, null);
+    }
+
+    public enum Face {
+      DOWN,
+      UP,
+      NORTH,
+      SOUTH,
+      WEST,
+      EAST
+    }
+
+    public Interaction {
+      Objects.requireNonNull(face, "face");
+      if (inventorySlot < -1 || inventorySlot > 8)
+        throw new IllegalArgumentException("Invalid hotbar slot");
+      if (!Double.isFinite(hitX) || !Double.isFinite(hitY) || !Double.isFinite(hitZ))
+        throw new IllegalArgumentException("Non-finite hit position");
+    }
+  }
+
   /** Nonnegative lexicographic cost: actions first, then materials, then risk. */
   public record Cost(int actions, int materials, int risk) implements Comparable<Cost> {
     public Cost {
@@ -44,7 +69,17 @@ public final class Planner {
   }
 
   public record Proposal(
-      Action action, BlockState result, Set<Position> affected, Cost cost, String ruleId) {
+      Action action,
+      BlockState result,
+      Set<Position> affected,
+      Cost cost,
+      String ruleId,
+      Interaction interaction) {
+    public Proposal(
+        Action action, BlockState result, Set<Position> affected, Cost cost, String ruleId) {
+      this(action, result, affected, cost, ruleId, null);
+    }
+
     public Proposal {
       Objects.requireNonNull(action, "action");
       Objects.requireNonNull(result, "result");
