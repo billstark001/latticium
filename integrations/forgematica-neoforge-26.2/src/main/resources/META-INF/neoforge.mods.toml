@@ -1,0 +1,23 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="All rights reserved"
+
+[[mods]]
+modId="latticium_forgematica_bridge"
+version="0.1.0"
+displayName="Latticium Forgematica Bridge"
+description="Reads active Forgematica placements for Latticium"
+
+[[dependencies.latticium_forgematica_bridge]]
+modId="latticium"
+type="required"
+versionRange="[0.1.0,0.1.0]"
+ordering="AFTER"
+side="CLIENT"
+
+[[dependencies.latticium_forgematica_bridge]]
+modId="forgematica"
+type="required"
+versionRange="[0.5.0+mc26.2,0.5.0+mc26.2]"
+ordering="AFTER"
+side="CLIENT"
