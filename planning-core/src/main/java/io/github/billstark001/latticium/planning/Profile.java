@@ -79,15 +79,29 @@ public record Profile(
     }
   }
 
-  /** Break permission and positive per-tick and per-activation action budgets. */
-  public record Policy(BreakMode breakMode, int maxActionsPerTick, int maxActionsPerActivation) {
+  /** Break permission, refresh mode, and positive action budgets. */
+  public record Policy(
+      BreakMode breakMode,
+      int maxActionsPerTick,
+      int maxActionsPerActivation,
+      RefreshMode refreshMode) {
     public enum BreakMode {
       DENY,
       SELECTED
     }
 
+    public enum RefreshMode {
+      CONTINUOUS,
+      MANUAL
+    }
+
+    public Policy(BreakMode breakMode, int maxActionsPerTick, int maxActionsPerActivation) {
+      this(breakMode, maxActionsPerTick, maxActionsPerActivation, RefreshMode.CONTINUOUS);
+    }
+
     public Policy {
       Objects.requireNonNull(breakMode, "breakMode");
+      Objects.requireNonNull(refreshMode, "refreshMode");
       if (maxActionsPerTick <= 0 || maxActionsPerActivation <= 0)
         throw new IllegalArgumentException("Action budgets must be positive");
     }
@@ -96,7 +110,8 @@ public record Profile(
     public Policy afterActions(int submittedActions) {
       if (submittedActions < 0 || submittedActions >= maxActionsPerActivation)
         throw new IllegalArgumentException("No remaining action budget");
-      return new Policy(breakMode, maxActionsPerTick, maxActionsPerActivation - submittedActions);
+      return new Policy(
+          breakMode, maxActionsPerTick, maxActionsPerActivation - submittedActions, refreshMode);
     }
   }
 

@@ -123,7 +123,7 @@ public final class ProfileReader {
                 air != null && air.booleanValue());
       }
       var po = o.has("policy") ? obj(o.get("policy"), "/policy") : StrictJson.emptyObject();
-      keys(po, "/policy", "break", "max_actions_per_tick", "max_actions_per_activation");
+      keys(po, "/policy", "break", "max_actions_per_tick", "max_actions_per_activation", "refresh");
       var policy =
           new Profile.Policy(
               choice(
@@ -139,7 +139,11 @@ public final class ProfileReader {
                   po,
                   "/policy/max_actions_per_activation",
                   "max_actions_per_activation",
-                  DEFAULT_ACTIONS_PER_ACTIVATION));
+                  DEFAULT_ACTIONS_PER_ACTIVATION),
+              choice(
+                  optional(po, "refresh", "continuous", "/policy/refresh"),
+                  Profile.Policy.RefreshMode.class,
+                  "/policy/refresh"));
       return new Profile(
           Profile.SCHEMA_VERSION, id, List.copyOf(uses), activation, scope, select, target, policy);
     } catch (IOException ex) {
