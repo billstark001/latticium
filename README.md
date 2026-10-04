@@ -1,6 +1,6 @@
 # Latticium
 
-Latticium is an experimental client construction mod for Minecraft 26.2 and 26.3. The DSL, profile format, and host contract are described in [discussion/](discussion/). The implementation has a Java 21 game-independent core and Java 25 game adapters.
+Latticium is an experimental client construction mod for Minecraft 26.2 and 26.3. Start with the [player and profile guide](docs/getting-started.md) and the complete [DSL and profile reference](docs/dsl-reference.md); optional mod authors can use the [bridge guide](docs/bridge-development.md). The design background is in [discussion/](discussion/), with concrete [next implementation steps](docs/next-implementation-steps.md). The implementation has a Java 21 game-independent core and Java 25 game adapters.
 
 ## Build
 
