@@ -4,7 +4,7 @@ Latticium is a client mod. Commands act through the player's normal reach, inven
 
 ## A finite selection and an immediate job
 
-Stand at one corner and run `/latticium pos1`, then stand at the opposite corner and run `/latticium pos2`. Save the inclusive box with `/latticium selection save build`. The selection is stored for the current server and dimension. A profile that names an unavailable or empty selection fails to start with an explicit error.
+Stand at one corner and run `/latticium pos1`, then stand at the opposite corner and run `/latticium pos2`. Each command prints the recorded block coordinates, such as `pos1 set: (10, 64, -5)`. Save the inclusive box with `/latticium selection save build`. The selection is stored for the current server and dimension. A profile that names an unavailable or empty selection fails to start with an explicit error.
 
 The commands `/latticium fill minecraft:stone`, `/latticium replace minecraft:dirt minecraft:stone`, and `/latticium clear` use `build`. Fill selects air, replace selects the named source block, and clear selects the whole box. Use `/latticium status`, `pause`, `resume`, and `cancel` to inspect and control the job. Pausing prevents the next submission; an action already sent to the server still has to settle. An action budget limits submissions in one activation, and reaching it ends that activation even if candidates remain.
 
@@ -32,7 +32,7 @@ Save this as `config/latticium/profiles/stone-fill.latticium.json` in the game d
 }
 ```
 
-Run `/latticium profile load stone-fill.latticium.json`, then `/latticium preview user:stone_fill` and `/latticium start user:stone_fill`. Preview reads at most four sections and reports how many sections remain; it is an estimate, not a whole-selection count. The separate `/latticium query <expression>` command likewise checks at most four sections of `build`; target-view predicates in this standalone query report Unknown because no target source is supplied. Profile expression strings contain one expression with no trailing semicolon. JSON string escaping still applies.
+Run `/latticium profile load stone-fill.latticium.json`, then `/latticium preview user:stone_fill` and `/latticium start user:stone_fill`. Profile IDs with a namespace use the unquoted `namespace:path` form in `preview`, `start`, `enable`, and `disable`. Preview reads at most four sections and reports how many sections remain; it is an estimate, not a whole-selection count. The separate `/latticium query <expression>` command likewise checks at most four sections of `build`; target-view predicates in this standalone query report Unknown because no target source is supplied. Profile expression strings contain one expression with no trailing semicolon. JSON string escaping still applies.
 
 `scope` must have enumerable finite bounds, such as `box(x0,y0,z0,x1,y1,z1)`, `sphere(player,r)`, or `selection("build")`. `select.where` filters positions inside that scope. `target` has exactly one main form: `items` (an item set), `clear: true`, or `source` (a registered target provider). Item targets may also specify a `states` state set and a `choose` preference. Source targets may specify `using` to restrict items and `include_air` to turn blueprint air into a clear target. The default break policy is `deny`; `selected` permits breaking selected positions. Missing fields and unknown JSON keys produce profile errors.
 

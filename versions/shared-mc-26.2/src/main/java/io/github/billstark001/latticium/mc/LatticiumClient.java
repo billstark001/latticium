@@ -174,12 +174,13 @@ public final class LatticiumClient {
     }
   }
 
-  public void setCorner(Minecraft minecraft, int which) {
+  public BlockPos setCorner(Minecraft minecraft, int which) {
     requireWorld(minecraft);
     var pos = minecraft.player.blockPosition();
     if (which == 1) firstCorner = pos;
     else if (which == 2) secondCorner = pos;
     else throw new IllegalArgumentException("Corner must be 1 or 2");
+    return pos;
   }
 
   /** Called after a vanilla server block-update packet has been applied to the client world. */

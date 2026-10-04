@@ -29,8 +29,16 @@ public final class NeoCommands {
                                 run(
                                     c.getSource(),
                                     () -> {
-                                      LatticiumClient.get().setCorner(Minecraft.getInstance(), 1);
-                                      return "First corner set";
+                                      var pos =
+                                          LatticiumClient.get()
+                                              .setCorner(Minecraft.getInstance(), 1);
+                                      return "pos1 set: ("
+                                          + pos.getX()
+                                          + ", "
+                                          + pos.getY()
+                                          + ", "
+                                          + pos.getZ()
+                                          + ")";
                                     })))
                 .then(
                     literal("pos2")
@@ -39,8 +47,16 @@ public final class NeoCommands {
                                 run(
                                     c.getSource(),
                                     () -> {
-                                      LatticiumClient.get().setCorner(Minecraft.getInstance(), 2);
-                                      return "Second corner set";
+                                      var pos =
+                                          LatticiumClient.get()
+                                              .setCorner(Minecraft.getInstance(), 2);
+                                      return "pos2 set: ("
+                                          + pos.getX()
+                                          + ", "
+                                          + pos.getY()
+                                          + ", "
+                                          + pos.getZ()
+                                          + ")";
                                     })))
                 .then(
                     literal("selection")
@@ -139,13 +155,16 @@ public final class NeoCommands {
                 .then(
                     literal("enable")
                         .then(
-                            argument("id", StringArgumentType.word())
+                            argument("id", StringArgumentType.greedyString())
                                 .executes(
                                     c ->
                                         run(
                                             c.getSource(),
                                             () -> {
-                                              var id = StringArgumentType.getString(c, "id");
+                                              var id =
+                                                  ResourceId.parse(
+                                                          StringArgumentType.getString(c, "id"))
+                                                      .toString();
                                               LatticiumClient.get()
                                                   .setEnabled(Minecraft.getInstance(), id, true);
                                               return "Enabled automatic profile: " + id;
@@ -153,13 +172,16 @@ public final class NeoCommands {
                 .then(
                     literal("disable")
                         .then(
-                            argument("id", StringArgumentType.word())
+                            argument("id", StringArgumentType.greedyString())
                                 .executes(
                                     c ->
                                         run(
                                             c.getSource(),
                                             () -> {
-                                              var id = StringArgumentType.getString(c, "id");
+                                              var id =
+                                                  ResourceId.parse(
+                                                          StringArgumentType.getString(c, "id"))
+                                                      .toString();
                                               LatticiumClient.get()
                                                   .setEnabled(Minecraft.getInstance(), id, false);
                                               return "Disabled automatic profile: " + id;
@@ -167,7 +189,7 @@ public final class NeoCommands {
                 .then(
                     literal("start")
                         .then(
-                            argument("id", StringArgumentType.word())
+                            argument("id", StringArgumentType.greedyString())
                                 .executes(
                                     c ->
                                         run(
@@ -176,7 +198,9 @@ public final class NeoCommands {
                                               LatticiumClient.get()
                                                   .start(
                                                       Minecraft.getInstance(),
-                                                      StringArgumentType.getString(c, "id"));
+                                                      ResourceId.parse(
+                                                              StringArgumentType.getString(c, "id"))
+                                                          .toString());
                                               return LatticiumClient.get().status();
                                             }))))
                 .then(
@@ -198,7 +222,7 @@ public final class NeoCommands {
                 .then(
                     literal("preview")
                         .then(
-                            argument("id", StringArgumentType.word())
+                            argument("id", StringArgumentType.greedyString())
                                 .executes(
                                     c ->
                                         run(
@@ -207,7 +231,10 @@ public final class NeoCommands {
                                                 LatticiumClient.get()
                                                     .preview(
                                                         Minecraft.getInstance(),
-                                                        StringArgumentType.getString(c, "id"),
+                                                        ResourceId.parse(
+                                                                StringArgumentType.getString(
+                                                                    c, "id"))
+                                                            .toString(),
                                                         4)
                                                     .toString()))))
                 .then(
