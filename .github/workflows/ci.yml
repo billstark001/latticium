@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew lint :dsl-core:test :planning-core:test --stacktrace
+
+  distributables:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: versions:fabric-26.2
+            path: versions/fabric-26.2
+            artifact: versions-fabric-26.2
+          - module: versions:fabric-26.3
+            path: versions/fabric-26.3
+            artifact: versions-fabric-26.3
+          - module: versions:neoforge-26.2
+            path: versions/neoforge-26.2
+            artifact: versions-neoforge-26.2
+          - module: versions:neoforge-26.3
+            path: versions/neoforge-26.3
+            artifact: versions-neoforge-26.3
+          - module: integrations:litematica-fabric-26.2
+            path: integrations/litematica-fabric-26.2
+            artifact: integrations-litematica-fabric-26.2
+          - module: integrations:litematica-fabric-26.3
+            path: integrations/litematica-fabric-26.3
+            artifact: integrations-litematica-fabric-26.3
+          - module: integrations:forgematica-neoforge-26.2
+            path: integrations/forgematica-neoforge-26.2
+            artifact: integrations-forgematica-neoforge-26.2
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew :${{ matrix.module }}:build --stacktrace
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}/build/libs/*.jar
+          if-no-files-found: error
