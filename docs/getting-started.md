@@ -52,7 +52,7 @@ selection("build") & !current(s{minecraft:air})
 biome(m{minecraft:plains}) & light(8..15)
 ```
 
-`current(...)` and `target(...)` apply a block or state set at a position. Other built-ins include `box`, `sphere`, `selection`, `dimension`, `offset`, `adjacent`, `fluid`, `biome`, `inventory`, `has_target`, `matches_target`, `light`, `solid`, and `surface`. A missing world fact evaluates to Unknown; negation does not turn Unknown into a match. Resource IDs are checked against the live game's registries when a profile is bound. The [implemented DSL reference](dsl-reference.md) lists syntax and built-ins. The [typed DSL design](../discussion/003-typed-dsl.md) also discusses proposed capabilities beyond the current in-game commands.
+`current(...)` and `target(...)` apply a block or state set at a position. Other built-ins include `box`, `sphere`, `selection`, `dimension`, `offset`, `adjacent`, `fluid`, `biome`, `inventory`, `has_target`, `matches_target`, `light`, `solid`, and `surface`. A missing world fact evaluates to Unknown; negation does not turn Unknown into a match. Resource IDs are checked against the live game's registries when a profile is bound. The [implemented DSL reference](dsl-reference.md) lists syntax and built-ins; [architecture and host contracts](architecture.md) explains the boundary between this read-only DSL and actions.
 
 ## Automatic activation
 

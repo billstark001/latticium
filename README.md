@@ -1,39 +1,51 @@
-# Latticium
+# Latticium — developer README
 
-Latticium is an experimental client construction mod for Minecraft 26.2 and 26.3. Start with the [player and profile guide](docs/getting-started.md) and the complete [DSL and profile reference](docs/dsl-reference.md); optional mod authors can use the [bridge guide](docs/bridge-development.md). The design background is in [discussion/](discussion/), with concrete [next implementation steps](docs/next-implementation-steps.md). The implementation has a Java 21 game-independent core and Java 25 game adapters.
+Latticium is a client-side construction engine for Minecraft 26.2 and 26.3 on Fabric and NeoForge. This README describes the repository and its contracts. The player-facing text for Modrinth is in [README_MODRINTH.md](README_MODRINTH.md); gameplay instructions are in [Getting started](docs/getting-started.md).
 
-## Build
+## Repository layout
 
-Use JDK 25 for Gradle. The core modules compile with `--release 21`.
+| Path | Responsibility | Java |
+| --- | --- | --- |
+| `dsl-core/` | Typed, read-only expression parser and binder | 21 |
+| `planning-core/` | Profiles, finite section scanning, target semantics, planner, job control | 21 |
+| `versions/shared-mc-26.*/` | Minecraft state, world, inventory, placement and action adapters | 25 |
+| `versions/fabric-26.*/`, `versions/neoforge-26.*/` | Loader entry points and distributable main mods | 25 |
+| `integrations/` | Optional, separately packaged schematic bridges | 25 |
+| `scripts/` | Official data, local smoke checks and release assembly | — |
+
+The core receives neutral facts and capabilities; it does not depend on Minecraft or loader classes. Each game adapter captures live data on the client thread, and the action gateway submits ordinary player interactions. A submitted action is only complete after a server update and the expected world state are observed. The [architecture and host contract](docs/architecture.md) records the durable decisions behind these boundaries. The [DSL reference](docs/dsl-reference.md) describes implemented syntax; the [bridge guide](docs/bridge-development.md) describes extension points.
+
+## Build and test
+
+Use JDK 25 to run Gradle. Core modules compile with `--release 21`; game modules compile with `--release 25`.
 
 ```powershell
 .\gradlew.bat formatAll check buildAll
 .\gradlew.bat fetchOfficialMinecraft bakeOfficialMinecraft :planning-core:officialTest
 ```
 
-The first command builds four client mods and three optional bridges. The second verifies registry fixtures generated from the official 26.2 and 26.3 game data. The build downloads exact reference versions of Litematica, MaLiLib, Forgematica, and MaFgLib into `.tmp/reference-mods`; these source mods are not bundled into the bridge JARs. See [validation details](docs/26.2-26.3-validation.md) and [official data validation](docs/official-data-validation.md).
+The build produces four main JARs and three optional bridge JARs. Bridge compile dependencies are downloaded to `.tmp/reference-mods/` with pinned SHA-512 hashes; they are not bundled into bridge JARs. See [official data validation](docs/official-data-validation.md), the [test record](docs/26.2-26.3-validation.md), and [release procedure](docs/releasing.md).
 
-For IDEA run configurations, local smoke checks, and contribution checks, see [CONTRIBUTING.md](CONTRIBUTING.md). To collect the seven distributable JARs or prepare a tagged release, see [release instructions](docs/releasing.md). The main mod and optional bridges publish to separate Modrinth projects.
+| Minecraft | Loader | Main project | Optional bridge project |
+| --- | --- | --- | --- |
+| 26.2 | Fabric | `versions/fabric-26.2` | `integrations/litematica-fabric-26.2` |
+| 26.3 | Fabric | `versions/fabric-26.3` | `integrations/litematica-fabric-26.3` |
+| 26.2 | NeoForge | `versions/neoforge-26.2` | `integrations/forgematica-neoforge-26.2` |
+| 26.3 | NeoForge | `versions/neoforge-26.3` | No validated schematic source yet |
 
-| Game | Loader | Main mod | Optional bridge |
-|---|---|---|---|
-| 26.2 | Fabric | `versions/fabric-26.2/build/libs/` | `integrations/litematica-fabric-26.2/build/libs/` |
-| 26.3 | Fabric | `versions/fabric-26.3/build/libs/` | `integrations/litematica-fabric-26.3/build/libs/` |
-| 26.2 | NeoForge | `versions/neoforge-26.2/build/libs/` | `integrations/forgematica-neoforge-26.2/build/libs/` |
-| 26.3 | NeoForge | `versions/neoforge-26.3/build/libs/` | None until a compatible schematic source can be tested |
+## IntelliJ IDEA and local clients
 
-The main mod has no schematic-mod dependency. The bridge JARs require the matching Latticium and source mod versions. Each target JAR uses the game and loader dependencies for its Minecraft version.
+Import the repository root as a Gradle project with JDK 25 as the Gradle JVM. All game modules use a Java 25 toolchain for compilation and Gradle client launches. On Gradle import, Loom generates the Fabric main and bridge run configurations; those configurations delegate to Gradle so the Java 25 launcher is used. NeoForge clients can be launched or debugged through their Gradle `runClient` tasks. If an old IDEA configuration still points at JDK 21, refresh the Gradle project and remove that stale local configuration. No shared `.run/` files are required. To explicitly regenerate Fabric configurations from IDEA, run the root `syncIdeaRunConfigurations` task.
 
-## Client use
+For a reproducible client launch, run one of these tasks (the optional bridges have matching `:integrations:*:runClient` tasks):
 
-All operations are opt-in. No profile starts scanning or acting merely because the mod is installed. In a world, set the two corners with `/latticium pos1` and `/latticium pos2`, then save them with `/latticium selection save build`. The commands `/latticium fill <item>`, `/latticium replace <source-block> <item>`, and `/latticium clear` submit finite jobs using that selection. Jobs refresh continuously by default; set `policy.refresh` to `manual` for one pass. `/latticium refresh` queues a full rescan of the current job in either mode. `/latticium status`, `pause`, `resume`, and `cancel` control the current job.
+```powershell
+.\gradlew.bat :versions:fabric-26.2:runClient
+.\gradlew.bat :versions:neoforge-26.2:runClient
+```
 
-Place a schema-1 `.latticium.json` file in `config/latticium/profiles`, then load it with `/latticium profile load <file>`, inspect it using `/latticium preview <id>`, and start it with `/latticium start <id>`. `/latticium enable <id>` allows its declared `enter` or `while` activation; `disable` removes that permission. `/latticium query <expression>` evaluates a predicate in the saved build selection. Query and preview report a bounded partial scan with an explicit total-section count. The API entry point is `io.github.billstark001.latticium.mc.LatticiumClient`.
+Each target has its own `run/` directory. The [contribution guide](CONTRIBUTING.md) covers local smoke checks and test expectations. Do not commit generated IDEA settings, worlds, logs, or build output.
 
-Jobs use ordinary player block interaction and break packets. The action gate checks the current session, target, block, inventory, reach, and break policy just before sending. It waits for a server block or section update and the expected world state before confirming a step. Unknown or unsupported placements are reported as blocked; arbitrary modded block behavior is not predicted.
+## Current maturity
 
-The optional bridges read the source mod's active placement and its in-memory schematic world. They do not parse `.litematic` files. Blueprint air is ignored by default and becomes a clear target only when the profile asks for `include_air`. Missing or changed active placements and overlapping subregions are reported instead of silently interpreted as empty targets.
-
-## Implementation status
-
-The seven JARs compile, core and official-data tests pass, and development clients have reached the title screen with the respective source mods. NeoForge 26.2 has also entered a singleplayer world. The [validation record](docs/26.2-26.3-validation.md) lists remaining in-game checks and known limitations. These builds are experimental until live fill, replace, clear, and blueprint construction are exercised on every target.
+The Java build and tests pass, and development clients have reached the title screen; NeoForge 26.2 has entered a singleplayer world. The [validation record](docs/26.2-26.3-validation.md) distinguishes those checks from gameplay acceptance. Full live fill, replace, clear, and blueprint construction checks across all targets are still open. Main mods work without schematic mods; bridges require their matching Latticium and source mod versions.

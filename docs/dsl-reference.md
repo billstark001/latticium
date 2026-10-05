@@ -1,6 +1,6 @@
 # DSL and profile reference
 
-This is the reference for the implemented language and schema-1 profiles. The [design discussion](../discussion/003-typed-dsl.md) also describes proposed capabilities, which may not be available in the game. The DSL is read-only: it selects members of typed sets and cannot send actions. JSON profiles specify when and where a job runs, what it tries to make, and its action policy.
+This is the reference for the implemented language and schema-1 profiles. The [architecture and host contracts](architecture.md) document its design boundaries; proposed capabilities there are explicitly marked as future work. The DSL is read-only: it selects members of typed sets and cannot send actions. JSON profiles specify when and where a job runs, what it tries to make, and its action policy.
 
 ## Where each form works
 

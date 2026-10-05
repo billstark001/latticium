@@ -1,18 +1,53 @@
 # Writing an optional blueprint bridge
 
-A bridge converts an already active schematic placement into neutral bounds and target cells. It runs in the client game process, depends on a matching Latticium main mod and source mod, and should be packaged separately so the main mod remains usable without that source. The existing [Litematica bridge](../integrations/litematica-fabric-26.2/src/main/java/io/github/billstark001/latticium/bridge/LitematicaBridge.java) and [Forgematica bridge](../integrations/forgematica-neoforge-26.2/src/main/java/io/github/billstark001/latticium/bridge/ForgematicaBridge.java) are concrete examples.
+A bridge adapts a schematic mod's **already active, in-memory placement** to finite selection bounds and target block states. It is a separate client mod with dependencies on one matching Latticium main mod, Minecraft/loader target, and source mod. It reads data only: Latticium retains action planning, ordinary player interaction and server-result confirmation. The existing [Litematica implementation](../integrations/litematica-fabric-26.2/src/main/java/io/github/billstark001/latticium/bridge/LitematicaBridge.java) and [Forgematica implementation](../integrations/forgematica-neoforge-26.2/src/main/java/io/github/billstark001/latticium/bridge/ForgematicaBridge.java) show the concrete loader APIs.
 
-Implement `LatticiumClient.BlueprintProvider`, which combines `Host.SelectionSource` and `Host.TargetSource`, and register it once during the loader's client initialization:
+## Contract and registration
+
+Implement `LatticiumClient.BlueprintProvider`, which extends `Host.SelectionSource` and `Host.TargetSource`. Register it once during the source loader's client initialization, after the main Latticium mod is available:
 
 ```java
 LatticiumClient.get().registerBlueprintProvider(
     ResourceId.parse("example:active_blueprint"), provider);
 ```
 
-A profile's `target.source` names the registered ID. `finiteBounds("active_blueprint", session)` must return inclusive `SectionScanner.Bounds` for the active placement, in the correct dimension. An empty list means no enumerable selection; starting a blueprint profile then fails. `target(position, session)` returns `TargetCell.Exact` for a known block state, `DontCare` outside the placement, or `Unknown` with a useful reason when the source cannot answer. Return an exact air state for blueprint air; Latticium applies the profile's `include_air` setting and turns it into `DontCare` or `Clear`. Do not use `DontCare` for an unavailable chunk or a changed placement.
+Duplicate target IDs are rejected. A profile then uses `"scope": "selection(\"active_blueprint\")"` and `"target": {"source": "example:active_blueprint"}`. The current client takes the blueprint selection from the provider named by `target.source`. Profiles can set `include_air: true` when air must become a clear target.
 
-Both calls happen on the client thread today. Take a stable identity and bounds snapshot when enumerating, then check that identity and bounds during target reads. Report removed or changed placements, dimension changes, and ambiguous overlap as `Unknown`. Each preview or job receives a distinct session; keep its snapshot separate from other sessions. Latticium converts a provider exception or `null` target into `Unknown`, but a bridge should return an explicit reason itself. Keep the bridge read-only: ordinary player interaction and server observation remain in Latticium's action gateway.
+| Method | Required result | Failure rule |
+| --- | --- | --- |
+| `finiteBounds(String selectionId, SessionId session)` | Immutable list of inclusive `SectionScanner.Bounds` in the active dimension | Return an empty list for a different name or no usable active placement. An empty scope cannot start a blueprint job. |
+| `target(Position position, SessionId session)` | One `TargetCell` for the same placement/session | Return `Unknown` with a reason whenever the source cannot answer reliably. |
 
-For a selection expression that reads target facts, section scanning may call `target` for many cells. Keep those reads bounded and avoid opening schematic files in the callback. When the selection expression has no target-view function, the current adapter skips bulk target capture and reads targets only for candidates and action rechecks. A future batch target API can reduce the remaining repeated placement validation.
+`Bounds` includes dimension and min/max X, Y and Z, all inclusive. Build each enabled subregion's box from both corners with `min`/`max`; do not assume source-mod corner order. Return a defensive, immutable copy. A placement spanning several subregions can return several boxes. Never invent a global or infinite scope from a point-read target API.
 
-The main and bridge JARs are assembled in the version-specific Gradle projects under `versions/` and `integrations/`. Match the bridge's Minecraft, loader, Latticium, and source-mod versions in its metadata. Verify registration, empty and changed placements, air handling, and overlap behavior in a live client before claiming support. The [validation record](26.2-26.3-validation.md) tracks the current tested matrix.
+## Snapshot lifecycle
+
+Each preview and job has a distinct `SessionId`. On `finiteBounds`, record the source placement object or stable ID, the active world/dimension, enabled subregion bounds and any source revision available. Keep snapshots keyed by session; do not let a preview overwrite the running job's snapshot. On `target`, verify that the client is still on the game thread, the world/dimension is unchanged, the same placement is selected and enabled, and its bounds or revision still match. Return `Unknown` if any check fails. A changed placement must not silently supply a new target under an old session.
+
+The current bridge implementations use weak session maps to avoid retaining abandoned previews. If the source API exposes an explicit lifecycle or content revision, include it in the snapshot. A bounds-only comparison cannot detect every in-place schematic edit; document that limit and test the source mod's available change signal.
+
+## Target semantics
+
+Return `TargetCell.Exact` for a known block state, including **exact air** inside a known blueprint region. Latticium maps exact air to `DontCare` by default, or to `Clear` when the profile requests `include_air`. Return `DontCare` outside the placement. Return `Unknown` for unloaded or unavailable schematic chunks, removed placements, ambiguous overlaps, source API failures, or state conversion that cannot be represented. Do not use `DontCare` or air as a fallback for missing data.
+
+For any position inside more than one enabled subregion or conflicting active placement, return `Unknown` unless the source API has a documented, stable precedence rule that the bridge explicitly implements. Check membership before reading schematic-world state. Convert source states to Latticium's neutral `Model.BlockState` through the version adapter; preserve properties rather than only the block ID. Catch source-mod exceptions at the boundary where useful and provide a specific reason. Latticium's `TargetSources.guarded` also converts runtime exceptions or null into `Unknown`, but a bridge should not rely on that for routine states.
+
+## Performance and threading
+
+The current callbacks run on the client game thread. Never open or parse a schematic file, load chunks, or block on I/O in `target`. Target-dependent section scanning may request many point reads, so cache immutable placement metadata per session and keep each read bounded. A target-free selection skips bulk target capture, but candidate and action rechecks still request targets. A future optional section-slice API is tracked separately; do not implement a private batch protocol that changes `Exact`/`Clear`/`DontCare`/`Unknown` behavior.
+
+The bridge has no authority to send game packets, change inventory or bypass `policy.break`. Only the Latticium action gateway performs interaction and waits for server observation. Keep all source-mod Java classes inside the bridge module so the main mod starts without that mod installed.
+
+## Packaging and verification
+
+Create a version-specific project under `integrations/`, following the existing bridge Gradle and metadata files. Declare the matching Minecraft, loader, main Latticium and source-mod versions. Reference source-mod APIs at compile time; package the bridge separately. Avoid bundling the source mod into the bridge JAR. Test the assembled JAR as well as a Gradle development run.
+
+At minimum, verify in a live client:
+
+1. Main Latticium launches and handles non-blueprint jobs without the bridge or source mod.
+2. The bridge registers once with a source mod present; no active placement yields no finite bounds and a clear profile error.
+3. A known non-air state, exact air with both `include_air` values, outside placement and an unavailable schematic chunk produce the specified cells.
+4. Multiple subregions, overlaps, placement switch/removal, world switch and a second preview while a job runs cannot reuse stale targets.
+5. The bridge JAR metadata enforces matching dependencies; preview and real interaction use the expected source version.
+
+Record each Minecraft/loader/source-mod version and result in the [validation matrix](26.2-26.3-validation.md). Current title-screen checks do not constitute blueprint construction acceptance.
