@@ -7,7 +7,7 @@ $versionLine = @(Get-Content -LiteralPath (Join-Path $projectRoot 'gradle.proper
     Where-Object { $_ -match '^mod_version=' })
 if ($versionLine.Count -ne 1) { throw 'Expected exactly one mod_version in gradle.properties.' }
 $version = $versionLine[0].Substring('mod_version='.Length).Trim()
-if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+if ($version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$') {
     throw "Invalid mod_version: $version"
 }
 

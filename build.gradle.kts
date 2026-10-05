@@ -16,7 +16,15 @@ plugins {
     id("net.neoforged.moddev") version "2.0.147" apply false
 }
 
-version = providers.gradleProperty("mod_version").get()
+val modVersion = providers.gradleProperty("mod_version").get()
+val semver =
+    Regex(
+        """^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$"""
+    )
+
+require(semver.matches(modVersion)) { "mod_version must be SemVer MAJOR.MINOR.PATCH[-PRERELEASE]" }
+
+version = modVersion
 
 val distributableProjects =
     listOf(
@@ -217,6 +225,15 @@ subprojects {
     tasks.withType<ProcessResources>().configureEach {
         val releaseVersion = project.version.toString()
         inputs.property("releaseVersion", releaseVersion)
+        if (
+            project.path.startsWith(":versions:fabric-") ||
+                project.path.startsWith(":versions:neoforge-")
+        ) {
+            from(rootProject.file("assets/latticium-icon.png")) {
+                into("assets/latticium")
+                rename { "icon.png" }
+            }
+        }
         filesMatching("fabric.mod.json") { expand("modVersion" to releaseVersion) }
         filesMatching("META-INF/neoforge.mods.toml") {
             expand("modVersion" to releaseVersion)
