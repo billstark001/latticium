@@ -7,6 +7,7 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.HexFormat
+import org.gradle.jvm.toolchain.JavaToolchainService
 
 plugins {
     base
@@ -205,6 +206,14 @@ subprojects {
         )
     }
     tasks.withType<Test>().configureEach { useJUnitPlatform() }
+    if (!coreModule) {
+        tasks.withType<JavaExec>().configureEach {
+            javaLauncher =
+                project.extensions.getByType<JavaToolchainService>().launcherFor {
+                    languageVersion.set(JavaLanguageVersion.of(25))
+                }
+        }
+    }
     tasks.withType<ProcessResources>().configureEach {
         val releaseVersion = project.version.toString()
         inputs.property("releaseVersion", releaseVersion)

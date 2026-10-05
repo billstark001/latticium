@@ -4,7 +4,11 @@ base.archivesName.set("latticium-litematica-fabric-26.3")
 
 loom {
     runs {
-        named("client") { configName = "Minecraft Client Latticium Litematica 26.3" }
+        named("client") {
+            displayName = "Minecraft Client Latticium Litematica 26.3"
+            generateRunConfig = true
+            preferGradleTask = true
+        }
     }
 }
 

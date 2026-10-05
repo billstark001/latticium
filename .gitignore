@@ -2,6 +2,7 @@
 **/build/
 **/run/
 .idea/
+.run/
 *.iml
 .tmp/
 __pycache__/
