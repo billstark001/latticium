@@ -57,7 +57,9 @@ public final class ReportRegistry implements Registry {
                 if (!ids.containsAll(members))
                   throw new IllegalArgumentException(
                       "Tag references unknown ID: " + entry.getKey());
-                group.put(ResourceId.parse(entry.getKey()), members);
+                var id = ResourceId.parse(entry.getKey());
+                if (group.putIfAbsent(id, members) != null)
+                  throw new IllegalArgumentException("Duplicate tag ID: " + id);
               });
       tags.put(type.getKey(), Map.copyOf(group));
     }
@@ -99,7 +101,8 @@ public final class ReportRegistry implements Registry {
                           throw new IllegalArgumentException("Duplicate state for " + block);
                       });
               if (legal.isEmpty()) throw new IllegalArgumentException("No states for " + block);
-              states.put(block, Set.copyOf(legal));
+              if (states.putIfAbsent(block, Set.copyOf(legal)) != null)
+                throw new IllegalArgumentException("Duplicate block ID: " + block);
             });
     if (!states.keySet().equals(universes.get(SetType.BLOCK)))
       throw new IllegalArgumentException("Block catalog mismatch");

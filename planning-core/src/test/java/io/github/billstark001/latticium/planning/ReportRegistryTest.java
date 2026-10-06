@@ -66,4 +66,27 @@ class ReportRegistryTest {
                     "\"block\":{}",
                     "\"block\":{\"minecraft:rocks\":[\"minecraft:stone\",\"minecraft:stone\"]}")));
   }
+
+  @Test
+  void normalizedBlockAndTagAliasesCannotOverwriteCatalogEntries() {
+    String catalog =
+        """
+        {"schema":1,"version":"test","universes":{"block":["minecraft:stone"],
+         "item":[],"fluid":[],"biome":[]},"tags":{"block":{},"item":{},"fluid":{},"biome":{}},
+         "blocks":{"minecraft:stone":{"properties":{},"states":[{}]}}}
+        """;
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            load(
+                catalog.replace(
+                    "\"blocks\":{", "\"blocks\":{\"stone\":{\"properties\":{},\"states\":[{}]},")));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            load(
+                catalog.replace(
+                    "\"block\":{}",
+                    "\"block\":{\"rocks\":[\"stone\"],\"minecraft:rocks\":[\"stone\"]}")));
+  }
 }

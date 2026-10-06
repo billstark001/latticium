@@ -17,6 +17,24 @@ class WorldStorageTest {
   @TempDir Path directory;
 
   @Test
+  void localWorldIdentityUsesTheNormalizedSaveDirectory() {
+    var first = directory.resolve("Same Name");
+    var second = directory.resolve("Same Name (1)");
+    assertNotEquals(WorldStorage.singleplayerKey(first), WorldStorage.singleplayerKey(second));
+    assertEquals(
+        WorldStorage.singleplayerKey(first), WorldStorage.singleplayerKey(first.resolve(".")));
+  }
+
+  @Test
+  void trailingEmptySelectionEntryIsRejectedInsteadOfDiscarded() throws Exception {
+    var path = directory.resolve("trailing.properties");
+    Files.writeString(path, "selection.build=minecraft:overworld,0,0,0,1,1,1;\n");
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WorldStorage.load(path, new HashMap<>(), new HashMap<>(), new HashSet<>()));
+  }
+
+  @Test
   void dimensionFilesStayInsideServerDirectoryAndDoNotCollide() {
     var first = WorldStorage.dimensionPath(directory, "a:b_c");
     var second = WorldStorage.dimensionPath(directory, "a_b:c");

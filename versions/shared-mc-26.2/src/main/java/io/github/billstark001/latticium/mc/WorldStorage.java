@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.level.storage.LevelResource;
 
 /** Per-server, per-dimension profile and selection preferences. No job starts when loaded. */
 final class WorldStorage {
@@ -30,7 +31,7 @@ final class WorldStorage {
     String server;
     if (minecraft.getCurrentServer() != null) server = minecraft.getCurrentServer().ip;
     else if (minecraft.getSingleplayerServer() != null)
-      server = "singleplayer:" + minecraft.getSingleplayerServer().getWorldData().getLevelName();
+      server = singleplayerKey(minecraft.getSingleplayerServer().getWorldPath(LevelResource.ROOT));
     else return null;
     var dimension = minecraft.level.dimension().identifier().toString();
     var directory =
@@ -42,6 +43,11 @@ final class WorldStorage {
             .toAbsolutePath()
             .normalize();
     return dimensionPath(directory, dimension);
+  }
+
+  /** Display names are neither unique nor stable; the save directory identifies a local world. */
+  static String singleplayerKey(Path saveDirectory) {
+    return "singleplayer:" + saveDirectory.toAbsolutePath().normalize();
   }
 
   static Path dimensionPath(Path directory, String dimension) {
@@ -157,7 +163,7 @@ final class WorldStorage {
     var result = new ArrayList<Bounds>();
     if (encoded.isEmpty()) return List.of();
     try {
-      for (var entry : encoded.split(";")) {
+      for (var entry : encoded.split(";", -1)) {
         var parts = entry.split(",", -1);
         if (parts.length != 7) throw new IllegalArgumentException("Invalid selection");
         result.add(
