@@ -49,44 +49,79 @@ final class ClientJobView {
   }
 
   static String status(
-      RefreshCoordinator refresh,
-      int pending,
-      int completed,
-      int actions,
-      int actionLimit,
-      Map<Position, String> blocked,
-      boolean budgetExhausted,
-      JobController active) {
+      ClientJobSnapshot snapshot, Map<Position, String> blocked, JobController active) {
     var example =
         blocked.entrySet().stream()
             .min(Comparator.comparing(entry -> entry.getKey().toString()))
             .orElse(null);
     return "scanned="
-        + refresh.scannedSections()
+        + snapshot.scannedSections()
         + "/"
-        + refresh.sectionCount()
+        + snapshot.totalSections()
         + " pending="
-        + pending
+        + snapshot.pendingCandidates()
         + " completed="
-        + completed
+        + snapshot.satisfiedCandidates()
         + " actions="
-        + actions
+        + snapshot.submittedActions()
         + "/"
-        + actionLimit
+        + snapshot.actionLimit()
         + " deferredSections="
-        + refresh.deferredCount()
+        + snapshot.deferredReads()
         + " unsupportedSections="
-        + refresh.unsupportedCount()
+        + snapshot.unsupportedSections()
         + " refresh="
-        + (refresh.continuous() ? "continuous" : "manual")
+        + (snapshot.continuous() ? "continuous" : "manual")
         + " dirty="
-        + refresh.dirtyCount()
+        + snapshot.dirtyReads()
         + " rescan="
-        + refresh.refreshRemaining()
+        + snapshot.refreshRemaining()
         + " blocked="
         + blocked.size()
         + (example == null ? "" : " firstBlocked=" + example.getKey() + ": " + example.getValue())
-        + (budgetExhausted ? " budgetExhausted=true" : "")
+        + (snapshot.phase() == ClientJobSnapshot.Phase.BUDGET_EXHAUSTED
+            ? " budgetExhausted=true"
+            : "")
         + (active == null ? "" : " active=" + active.status());
+  }
+
+  static ClientJobSnapshot snapshot(
+      Profile profile,
+      RefreshCoordinator refresh,
+      int pending,
+      int completed,
+      int actions,
+      int blocked,
+      boolean exhausted,
+      boolean paused,
+      JobController active) {
+    boolean waiting = active != null && active.status() == JobController.Status.WAITING;
+    var phase =
+        ClientJobSnapshot.phase(
+            paused,
+            waiting,
+            exhausted,
+            refresh.hasScanWork(),
+            refresh.continuous(),
+            pending,
+            blocked,
+            refresh.unsupportedCount());
+    return new ClientJobSnapshot(
+        profile.id().toString(),
+        phase,
+        paused,
+        waiting,
+        refresh.continuous(),
+        refresh.scannedSections(),
+        refresh.sectionCount(),
+        pending,
+        completed,
+        actions,
+        profile.policy().maxActionsPerActivation(),
+        refresh.deferredCount(),
+        refresh.unsupportedCount(),
+        refresh.dirtyCount(),
+        refresh.refreshRemaining(),
+        blocked);
   }
 }

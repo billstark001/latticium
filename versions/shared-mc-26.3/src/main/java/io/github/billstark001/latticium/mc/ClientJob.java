@@ -142,24 +142,7 @@ public final class ClientJob {
   }
 
   public Preview preview(int maxSections) {
-    if (maxSections <= 0) throw new IllegalArgumentException("Positive preview budget required");
-    int known = 0;
-    int unknown = 0;
-    int unavailable = 0;
-    int scanned = Math.min(maxSections, refresh.sectionCount());
-    for (int index = 0; index < scanned; index++) {
-      var section = refresh.sections().get(index);
-      var capture = capture(section.key());
-      if (!(capture instanceof Host.Capture.Ready ready)) {
-        unavailable++;
-        continue;
-      }
-      var mask =
-          SCANNER.scanGroup(section, profile.scope(), profile.select(), ready.snapshot().facts());
-      unknown += mask.unknownCount();
-      known += mask.trueCount();
-    }
-    return new Preview(scanned, refresh.sectionCount(), unavailable, known, unknown);
+    return ClientJobPreview.scan(profile, refresh.sections(), this::capture, maxSections);
   }
 
   private void scan(SectionScanner.SectionGroup section) {
@@ -424,14 +407,19 @@ public final class ClientJob {
   }
 
   public String status() {
-    return ClientJobView.status(
+    return ClientJobView.status(snapshot(), blocked, active);
+  }
+
+  public ClientJobSnapshot snapshot() {
+    return ClientJobView.snapshot(
+        profile.profile(),
         refresh,
         pending.size(),
         completed,
         submittedActions,
-        profile.profile().policy().maxActionsPerActivation(),
-        blocked,
+        blocked.size(),
         budgetExhausted,
+        paused,
         active);
   }
 

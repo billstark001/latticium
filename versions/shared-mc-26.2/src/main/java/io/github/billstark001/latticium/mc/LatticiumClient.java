@@ -54,6 +54,7 @@ public final class LatticiumClient {
   private ClientJob job;
   private final List<ClientJob> settling = new ArrayList<>();
   private String activeAutoId;
+  private boolean automaticSuspended;
   private Position lastActivationPlayer;
   private int lastActivationRadius;
   private boolean activationDirty = true;
@@ -127,6 +128,7 @@ public final class LatticiumClient {
   }
 
   private void sampleActivations(Minecraft minecraft) {
+    if (automaticSuspended) return;
     if (enabled.isEmpty() || session == null || minecraft.player == null) return;
     if (job != null && !job.isFinished() && activeAutoId == null) return;
     var feet = minecraft.player.blockPosition();
@@ -152,7 +154,7 @@ public final class LatticiumClient {
           hasActivation = true;
         }
       } catch (RuntimeException error) {
-        autoErrors.put(id, error.getMessage());
+        autoErrors.put(id, Objects.toString(error.getMessage(), error.getClass().getSimpleName()));
       }
     }
     if (!hasActivation) return;
@@ -182,7 +184,8 @@ public final class LatticiumClient {
           activeAutoId = id;
           autoErrors.remove(id);
         } catch (RuntimeException error) {
-          autoErrors.put(id, error.getMessage());
+          autoErrors.put(
+              id, Objects.toString(error.getMessage(), error.getClass().getSimpleName()));
         }
       }
     }
@@ -448,6 +451,34 @@ public final class LatticiumClient {
 
   public Map<Position, String> blocked() {
     return job == null ? Map.of() : job.blocked();
+  }
+
+  public ClientUiState uiState() {
+    return new ClientUiState(
+        world != null,
+        job == null ? null : job.snapshot(),
+        settling.size(),
+        automaticSuspended,
+        enabled,
+        autoErrors,
+        storageError,
+        blueprints.keySet());
+  }
+
+  public List<String> profileIds() {
+    return profiles.keySet().stream().sorted().toList();
+  }
+
+  /** Stops new work and holds automatic activation until explicitly restored. */
+  public void stopAll() {
+    automaticSuspended = true;
+    cancel();
+  }
+
+  public void restoreAutomaticActivation() {
+    automaticSuspended = false;
+    autoTrackers.clear();
+    activationDirty = true;
   }
 
   private void requireWorld(Minecraft minecraft) {
