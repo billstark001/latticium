@@ -9,9 +9,9 @@ $logDirectory = Join-Path $projectRoot 'build/neoforge-smoke-logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
 $targets = @(
-    @{ Module = 'versions:neoforge-26.2'; Project = 'versions/neoforge-26.2'; Mods = @('latticium') },
-    @{ Module = 'versions:neoforge-26.3'; Project = 'versions/neoforge-26.3'; Mods = @('latticium') },
-    @{ Module = 'integrations:forgematica-neoforge-26.2'; Project = 'integrations/forgematica-neoforge-26.2'; Mods = @('latticium', 'latticium_forgematica_bridge', 'forgematica') }
+    @{ Module = 'versions:neoforge-26.2'; Project = 'versions/neoforge-26.2'; Mods = @('latticium', 'cloth_config') },
+    @{ Module = 'versions:neoforge-26.3'; Project = 'versions/neoforge-26.3'; Mods = @('latticium', 'cloth_config') },
+    @{ Module = 'integrations:forgematica-neoforge-26.2'; Project = 'integrations/forgematica-neoforge-26.2'; Mods = @('latticium', 'cloth_config', 'latticium_forgematica_bridge', 'forgematica') }
 )
 
 function Stop-ProcessTree {

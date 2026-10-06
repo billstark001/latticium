@@ -2,6 +2,8 @@
 
 Latticium is a client-side construction engine for Minecraft 26.2 and 26.3 on Fabric and NeoForge. This README describes the repository and its contracts. The player-facing text for Modrinth is in [README_MODRINTH.md](README_MODRINTH.md); gameplay instructions are in [Getting started](docs/getting-started.md).
 
+Version 0.0.2 adds native task controls, a small HUD, diagnostics, and one Cloth Config / AutoConfig settings model for both loaders. UI translations are centralized in `assets/lang/` and packaged into each shared game adapter. Cloth Config is bundled; Fabric Mod Menu is an optional settings entry and NeoForge uses its built-in mod-list entry. F8 opens task controls and F9 pauses/resumes a task; selection rendering is outside this release's scope.
+
 ## Repository layout
 
 | Path | Responsibility | Java |

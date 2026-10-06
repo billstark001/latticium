@@ -7,6 +7,8 @@ Latticium is a client-side Minecraft construction mod. Select a finite area, des
 - Fill empty spaces, replace selected blocks, or clear a saved area with `/latticium` commands.
 - Save a JSON profile with a typed, read-only selection expression, target and action limits.
 - Pause, resume, cancel and refresh jobs; inspect blocked work with `/latticium status`.
+- Open task controls with F8, pause/resume with F9, and inspect a small HUD and grouped diagnostics.
+- Configure the UI through the bundled Cloth Config screen, with English, Simplified Chinese, Traditional Chinese, and Japanese translations. Fabric supports an optional Mod Menu entry; NeoForge uses its built-in mod-list settings entry.
 - Use an active Litematica or Forgematica placement as a blueprint through an optional bridge mod. Latticium reads the source mod's loaded placement; it does not import `.litematic` files.
 
 ## First steps

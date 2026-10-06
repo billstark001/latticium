@@ -2,6 +2,18 @@
 
 Latticium is a client mod. Commands act through the player's normal reach, inventory, placement, and breaking interactions. Work only starts after a command or an explicitly enabled profile activation. Test a small selection first: the 26.2/26.3 in-world acceptance matrix is still in progress.
 
+## Task controls, HUD, and settings
+
+Press **F8**, or run `/latticium ui`, to open the native task controls. Select a loaded profile and press **Start** to start it or replace the current task. A pending server confirmation prevents replacement. **Pause / Resume**, **Cancel task**, and **Refresh scan** use the same controller as the commands. **F9** toggles pause/resume while playing. All shortcuts are rebindable under the Latticium category in Minecraft's Controls menu; the stop-all and HUD-toggle shortcuts are initially unbound.
+
+**Stop task + auto** cancels the task and suspends all automatic activation until **Restore automatic activation** is pressed. This hold lasts for the client process, including world changes; it does not erase the saved enabled-profile flags. Already submitted interactions still need to settle, and stopping does not undo world changes. Manual starts remain explicit actions even while automatic activation is suspended.
+
+The controls screen does not pause the game. The optional setting **Pause task when opening controls** pauses new submissions when the screen opens; continuing the task requires an explicit Resume. The task HUD is hidden over screens and follows Minecraft's Hide GUI option. It reports scanned sections, satisfied candidate checks, pending candidates, submitted actions, and blocked counts. Satisfied checks can include positions already matching the target or revisited positions; they are not a placed-block count. Continuous mode remains in monitoring after its first pass, and exhausting the action budget is a separate state from completing a pass.
+
+The **Diagnostics** page groups blocked positions by the engine's reason, gives one sample coordinate and a localized suggestion, and reports deferred reads, unsupported sections, automatic activation errors, and registered blueprint providers. It caps displayed reason groups while preserving total counts. **Copy report** copies the displayed diagnostics and task summary to the clipboard. Original engine details can be shown for troubleshooting; arbitrary provider messages retain their original text.
+
+Open settings from the controls screen or `/latticium settings`. On Fabric, installing the optional **Mod Menu** also adds a settings entry. On NeoForge, use **Mods → Latticium → Config**. Both open the same Cloth Config / AutoConfig screen and store client preferences in `config/latticium.json`. Cloth Config is bundled in the main JARs. UI labels, controls, diagnostic categories, and suggestions follow Minecraft's language setting: English, Simplified Chinese, Traditional Chinese, or Japanese. Version 0.0.2 does not add selection rendering or a map; selection and profile authoring commands remain available below.
+
 ## A finite selection and an immediate job
 
 Stand at one corner and run `/latticium pos1`, then stand at the opposite corner and run `/latticium pos2`. Each command prints the recorded block coordinates, such as `pos1 set: (10, 64, -5)`. Save the inclusive box with `/latticium selection save build`. The selection is stored for the current server and dimension. A profile that names an unavailable or empty selection fails to start with an explicit error.
