@@ -3,6 +3,7 @@ package io.github.billstark001.latticium.planning;
 import io.github.billstark001.latticium.dsl.Model.*;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 /** Neutral contracts for the client adapters and fake offline hosts. */
@@ -78,6 +79,15 @@ public final class Host {
   public interface TargetSource {
     /** Returns a target cell or an explicit unknown result for unavailable target data. */
     TargetCell target(Position pos, SessionId session);
+
+    /**
+     * Optional immutable target window captured in the requested session. Point reads remain the
+     * fallback. Providers must perform the same identity, bounds and residency checks as target().
+     * A slice is a short-lived read, not permission to reuse targets after the provider changes.
+     */
+    default Optional<TargetSlice> slice(SectionScanner.Bounds bounds, SessionId session) {
+      return Optional.empty();
+    }
   }
 
   public record Preconditions(
