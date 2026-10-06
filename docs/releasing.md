@@ -2,7 +2,7 @@
 
 The four `versions/*` JARs are Latticium itself. The three `integrations/*` JARs are optional bridges. The 26.3 NeoForge bridge is absent because a compatible schematic source has not been validated.
 
-Run `./scripts/build-release.ps1` in PowerShell 7 (or `pwsh ./scripts/build-release.ps1` on Linux). The script builds all seven targets, checks the exact versioned JAR names, and writes `build/release/` with the JARs and SHA-256 checksums. `-SkipBuild` only collects existing builds. Run `./gradlew check` as well before preparing a release; live game checks remain manual.
+Run `./scripts/build-release.ps1` in PowerShell 7 (or `pwsh ./scripts/build-release.ps1` on Linux). The script builds all seven targets, checks the exact versioned JAR names, and writes `build/release/` with the JARs and SHA-256 checksums. `-SkipBuild` only collects existing builds. Run `./gradlew check` as well before preparing a release; `check` also compiles the development gameplay probes against both game versions without launching them or adding them to mod JARs. Run `scripts/run-local-gameplay-audit.ps1` for the live checks described in the [validation record](26.2-26.3-validation.md).
 
 The only mod-version value to edit is `mod_version` in `gradle.properties`. It uses SemVer `MAJOR.MINOR.PATCH` with an optional prerelease suffix (for example `-beta.1`), without a leading `v` or build metadata. Gradle derives the project/JAR versions and all Fabric/NeoForge metadata from it. Modrinth version IDs add Minecraft and loader details as SemVer build metadata, so each target has a unique ID without another independently maintained mod version. `0.y.z` denotes initial development; do not infer stable compatibility from it.
 
