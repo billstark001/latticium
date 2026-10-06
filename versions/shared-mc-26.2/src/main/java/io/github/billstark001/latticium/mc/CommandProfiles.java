@@ -3,17 +3,27 @@ package io.github.billstark001.latticium.mc;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.billstark001.latticium.dsl.Model;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
 import io.github.billstark001.latticium.planning.Profile;
+import java.util.stream.Collectors;
 
 /** Builds client command profiles using the same schema as saved profiles. */
 public final class CommandProfiles {
   private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final String AIR_SELECT =
+      "current(b{"
+          + Model.vanillaAirBlocks().stream()
+              .sorted()
+              .map(ResourceId::toString)
+              .collect(Collectors.joining(","))
+          + "})";
 
   private CommandProfiles() {}
 
+  /** Fills all three vanilla air variants using the requested item without allowing breaks. */
   public static String fill(ResourceId item) {
-    return items("current(s{minecraft:air})", item, "deny");
+    return items(AIR_SELECT, item, "deny");
   }
 
   public static String replace(ResourceId source, ResourceId item) {

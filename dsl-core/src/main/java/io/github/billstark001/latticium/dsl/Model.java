@@ -18,6 +18,11 @@ public final class Model {
 
   private Model() {}
 
+  /** Immutable IDs of normal, cave and void air, shared by commands and target policies. */
+  public static Set<ResourceId> vanillaAirBlocks() {
+    return VANILLA_AIR;
+  }
+
   /** Recognizes the property-free states of the three vanilla air blocks. */
   public static boolean isVanillaAir(BlockState state) {
     return VANILLA_AIR.contains(state.block()) && state.properties().isEmpty();
