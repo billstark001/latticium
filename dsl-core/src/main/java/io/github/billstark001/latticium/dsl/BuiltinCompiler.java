@@ -1,5 +1,6 @@
 package io.github.billstark001.latticium.dsl;
 
+import static io.github.billstark001.latticium.dsl.FactDependencies.Fact.*;
 import static io.github.billstark001.latticium.dsl.Model.*;
 import static io.github.billstark001.latticium.dsl.Syntax.*;
 
@@ -65,7 +66,8 @@ final class BuiltinCompiler {
                 return b.contains(f, b.type() == SetType.BLOCK ? x.state().block() : x.state());
               return Truth.FALSE;
             },
-            b.radius());
+            b.radius(),
+            b.dependencies().union(FactDependencies.of(n.equals("current") ? STATE : TARGET)));
       }
       case "biome", "fluid" -> {
         arity(c, 1);
@@ -82,7 +84,8 @@ final class BuiltinCompiler {
                           return id == null ? Truth.UNKNOWN : b.contains(f, id);
                         })
                     .orElse(Truth.UNKNOWN),
-            b.radius());
+            b.radius(),
+            b.dependencies().union(FactDependencies.of(n.equals("biome") ? BIOME : FLUID)));
       }
       case "states_of" -> {
         arity(c, 1);
@@ -93,7 +96,8 @@ final class BuiltinCompiler {
               var state = (BlockState) v;
               return compiler.legalState(state) ? b.contains(f, state.block()) : Truth.FALSE;
             },
-            b.radius());
+            b.radius(),
+            b.dependencies());
       }
       case "blocks_of" -> {
         arity(c, 1);
@@ -108,7 +112,8 @@ final class BuiltinCompiler {
               }
               return result;
             },
-            b.radius());
+            b.radius(),
+            b.dependencies());
       }
       case "property" -> {
         arity(c, 1);
@@ -121,7 +126,8 @@ final class BuiltinCompiler {
                   compiler.legalState(state)
                       && pair.value().equals(state.properties().get(pair.key())));
             },
-            0);
+            0,
+            FactDependencies.NONE);
       }
       case "state" -> {
         arity(c, 1);
@@ -137,7 +143,8 @@ final class BuiltinCompiler {
                                 : truth(
                                     pair.value().equals(w.state().properties().get(pair.key()))))
                     .orElse(Truth.UNKNOWN),
-            0);
+            0,
+            FactDependencies.of(STATE));
       }
       case "property_range" -> {
         arity(c, 2);
@@ -157,12 +164,14 @@ final class BuiltinCompiler {
                 return Truth.FALSE;
               }
             },
-            0);
+            0,
+            FactDependencies.NONE);
       }
       case "dimension" -> {
         arity(c, 1);
         var id = id(a.getFirst());
-        yield new Bound(SetType.POS, (f, p, v) -> truth(p.dimension().equals(id)), 0);
+        yield new Bound(
+            SetType.POS, (f, p, v) -> truth(p.dimension().equals(id)), 0, FactDependencies.NONE);
       }
       case "box" -> {
         arity(c, 6);
@@ -184,12 +193,14 @@ final class BuiltinCompiler {
                         && p.y() <= y1
                         && p.z() >= z0
                         && p.z() <= z1),
-            0);
+            0,
+            FactDependencies.NONE);
       }
       case "selection" -> {
         arity(c, 1);
         String s = name(a.getFirst());
-        yield new Bound(SetType.POS, (f, p, v) -> f.selection(s, p), 0);
+        yield new Bound(
+            SetType.POS, (f, p, v) -> f.selection(s, p), 0, FactDependencies.of(SELECTION));
       }
       case "offset" -> {
         arity(c, 4);
@@ -200,7 +211,11 @@ final class BuiltinCompiler {
                 + b.radius();
         if (radius > compiler.maxRadius())
           throw new Failure("Read radius exceeds budget", c.span());
-        yield new Bound(SetType.POS, (f, p, v) -> atOffset(b, f, p, x, y, z), (int) radius);
+        yield new Bound(
+            SetType.POS,
+            (f, p, v) -> atOffset(b, f, p, x, y, z),
+            (int) radius,
+            b.dependencies().shift(x, y, z));
       }
       case "adjacent" -> {
         arity(c, 1);
@@ -208,16 +223,7 @@ final class BuiltinCompiler {
         if (b.radius() >= compiler.maxRadius())
           throw new Failure("Read radius exceeds budget", c.span());
         yield new Bound(
-            SetType.POS,
-            (f, p, v) -> {
-              Truth result = Truth.FALSE;
-              for (var d : NEIGHBORS) {
-                result = result.or(atOffset(b, f, p, d.x(), d.y(), d.z()));
-                if (result == Truth.TRUE) break;
-              }
-              return result;
-            },
-            b.radius() + 1);
+            SetType.POS, new AdjacentMembership(b), b.radius() + 1, b.dependencies().adjacent());
       }
       case "has_target", "matches_target" -> {
         arity(c, 0);
@@ -236,7 +242,12 @@ final class BuiltinCompiler {
                   ? truth(x.state().equals(world.get().state()))
                   : truth(isVanillaAir(world.get().state()));
             },
-            0);
+            0,
+            FactDependencies.of(TARGET)
+                .union(
+                    n.equals("matches_target")
+                        ? FactDependencies.of(STATE)
+                        : FactDependencies.NONE));
       }
       case "changed", "same", "compare" -> {
         arity(c, n.equals("compare") ? 2 : 1);
@@ -272,7 +283,8 @@ final class BuiltinCompiler {
                 return Truth.FALSE;
               }
             },
-            0);
+            0,
+            FactDependencies.of(STATE, TARGET));
       }
       case "inventory" -> {
         arity(c, 1);
@@ -286,7 +298,8 @@ final class BuiltinCompiler {
                   .map(items -> eligible.and(truth(items.contains(v))))
                   .orElse(Truth.UNKNOWN);
             },
-            b.radius());
+            b.radius(),
+            b.dependencies().union(FactDependencies.of(INVENTORY)));
       }
       case "sphere" -> {
         arity(c, 2);
@@ -318,7 +331,8 @@ final class BuiltinCompiler {
                   p.dimension().equals(center.dimension())
                       && withinSphere(p.x(), p.y(), p.z(), center.x(), center.y(), center.z(), r));
             },
-            0);
+            0,
+            anchorPoint == null ? FactDependencies.of(PLAYER) : FactDependencies.NONE);
       }
       case "light" -> {
         arity(c, 1);
@@ -329,7 +343,8 @@ final class BuiltinCompiler {
                 f.world(p)
                     .map(w -> w.light() == null ? Truth.UNKNOWN : truth(r.contains(w.light())))
                     .orElse(Truth.UNKNOWN),
-            0);
+            0,
+            FactDependencies.of(LIGHT));
       }
       case "solid" -> {
         arity(c, 0);
@@ -339,7 +354,8 @@ final class BuiltinCompiler {
                 f.world(p)
                     .map(w -> w.solid() == null ? Truth.UNKNOWN : truth(w.solid()))
                     .orElse(Truth.UNKNOWN),
-            0);
+            0,
+            FactDependencies.of(SOLID));
       }
       case "surface" -> {
         arity(c, 0);
@@ -371,7 +387,8 @@ final class BuiltinCompiler {
               }
               return result;
             },
-            1);
+            1,
+            FactDependencies.of(STATE).union(FactDependencies.of(STATE).adjacent()));
       }
       default -> compiler.bindPrimitive(c, locals, depth);
     };
@@ -407,7 +424,7 @@ final class BuiltinCompiler {
   }
 
   private static Bound constant(boolean value) {
-    return new Bound(SetType.POS, (f, p, v) -> truth(value), 0);
+    return new Bound(SetType.POS, (f, p, v) -> truth(value), 0, FactDependencies.NONE);
   }
 
   private static Truth truth(boolean value) {

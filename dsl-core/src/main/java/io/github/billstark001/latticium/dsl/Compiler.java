@@ -48,17 +48,31 @@ public final class Compiler {
     Truth test(Facts facts, Position pos, Object element);
   }
 
-  public record Bound(SetType type, Membership membership, int radius) {
+  public record Bound(
+      SetType type, Membership membership, int radius, FactDependencies dependencies) {
+    /** Legacy/custom memberships conservatively request every fact. */
+    public Bound(SetType type, Membership membership, int radius) {
+      this(type, membership, radius, FactDependencies.ALL);
+    }
+
     public Bound {
       java.util.Objects.requireNonNull(type, "type");
       java.util.Objects.requireNonNull(membership, "membership");
+      java.util.Objects.requireNonNull(dependencies, "dependencies");
       if (radius < 0) throw new IllegalArgumentException("Negative read radius");
     }
 
     /** Evaluates a position predicate; unavailable captured facts remain {@link Truth#UNKNOWN}. */
     public Truth at(Facts facts, Position pos) {
       if (type != SetType.POS) throw new IllegalStateException("Not PosSet");
-      return membership.test(facts, java.util.Objects.requireNonNull(pos, "pos"), null);
+      java.util.Objects.requireNonNull(pos, "pos");
+      return facts instanceof EvaluationFacts frame
+          ? frame.evaluate(this, pos)
+          : membership.test(facts, pos, null);
+    }
+
+    Truth test(Facts facts, Position pos, Object element) {
+      return type == SetType.POS ? at(facts, pos) : membership.test(facts, pos, element);
     }
 
     /** Tests a registry element; position predicates must use {@link #at(Facts, Position)}. */
@@ -79,10 +93,19 @@ public final class Compiler {
     int radius();
 
     Membership bind(List<Bound> arguments);
+
+    /** Facts read directly by this primitive; argument requirements are added by the binder. */
+    default FactDependencies dependencies() {
+      return FactDependencies.ALL;
+    }
   }
 
   private record RegisteredPrimitive(
-      List<SetType> parameters, SetType result, int radius, Primitive implementation) {}
+      List<SetType> parameters,
+      SetType result,
+      int radius,
+      FactDependencies dependencies,
+      Primitive implementation) {}
 
   private static final Set<String> BUILTINS =
       Set.of(
@@ -126,37 +149,6 @@ public final class Compiler {
     return new Compiler(new SymbolicRegistry());
   }
 
-  private static final class SymbolicRegistry implements Registry {
-    private static void requireRegistryKind(SetType kind) {
-      if (kind == null || kind == SetType.POS)
-        throw new IllegalArgumentException("Position sets have no registry domain");
-    }
-
-    public Resolution resolve(SetType kind, ResourceId id) {
-      requireRegistryKind(kind);
-      return Resolution.FOUND;
-    }
-
-    public Resolution resolveTag(SetType kind, ResourceId id) {
-      requireRegistryKind(kind);
-      return Resolution.FOUND;
-    }
-
-    public Set<ResourceId> tag(SetType kind, ResourceId id) {
-      requireRegistryKind(kind);
-      return Set.of();
-    }
-
-    public Set<ResourceId> universe(SetType kind) {
-      requireRegistryKind(kind);
-      return Set.of();
-    }
-
-    public Set<BlockState> states(ResourceId block) {
-      return Set.of();
-    }
-  }
-
   public Compiler(Registry registry) {
     this(registry, DEFAULT_MAX_RADIUS);
   }
@@ -185,7 +177,14 @@ public final class Compiler {
     int radius = primitive.radius();
     if (radius < 0 || radius > maxRadius)
       throw new IllegalArgumentException("Invalid primitive radius");
-    var registered = new RegisteredPrimitive(parameters, result, radius, primitive);
+    var registered =
+        new RegisteredPrimitive(
+            parameters,
+            result,
+            radius,
+            java.util.Objects.requireNonNull(primitive.dependencies(), "primitive dependencies")
+                .asBroad(),
+            primitive);
     if (!name.matches("[A-Za-z_][A-Za-z0-9_]*")
         || BUILTINS.contains(name)
         || declarations.containsKey(name)
@@ -295,14 +294,16 @@ public final class Compiler {
                       f.world(p)
                           .map(w -> w.biome() == null ? Truth.UNKNOWN : b.contains(f, w.biome()))
                           .orElse(Truth.UNKNOWN),
-                  0)
+                  0,
+                  FactDependencies.of(FactDependencies.Fact.BIOME))
               : new Bound(
                   SetType.POS,
                   (f, p, v) ->
                       f.world(p)
                           .map(w -> w.state() == null ? Truth.UNKNOWN : b.contains(f, w.state()))
                           .orElse(Truth.UNKNOWN),
-                  0);
+                  0,
+                  FactDependencies.of(FactDependencies.Fact.STATE));
     } else if (e instanceof Range r) {
       if ("xyz".indexOf(r.axis()) < 0) throw new Failure("Range needs x, y or z axis", r.span());
       result =
@@ -317,7 +318,8 @@ public final class Compiler {
                     };
                 return r.range().contains(coordinate) ? Truth.TRUE : Truth.FALSE;
               },
-              0);
+              0,
+              FactDependencies.NONE);
     } else if (e instanceof Binary b) {
       Bound left, right;
       if (expected == null && ExpressionAnalysis.needsTypeFromRight(b.left())) {
@@ -332,16 +334,13 @@ public final class Compiler {
           new Bound(
               left.type(),
               (f, p, v) -> {
-                Truth first = left.membership().test(f, p, v);
+                Truth first = left.test(f, p, v);
                 if (b.operator() == '&')
-                  return first == Truth.FALSE
-                      ? Truth.FALSE
-                      : first.and(right.membership().test(f, p, v));
-                return first == Truth.TRUE
-                    ? Truth.TRUE
-                    : first.or(right.membership().test(f, p, v));
+                  return first == Truth.FALSE ? Truth.FALSE : first.and(right.test(f, p, v));
+                return first == Truth.TRUE ? Truth.TRUE : first.or(right.test(f, p, v));
               },
-              Math.max(left.radius(), right.radius()));
+              Math.max(left.radius(), right.radius()),
+              left.dependencies().union(right.dependencies()));
     } else if (e instanceof Negate n) {
       var child = bind(n.inner(), expected, locals, depth + 1);
       result =
@@ -355,9 +354,10 @@ public final class Compiler {
                     && child.type() != SetType.STATE
                     && (!(v instanceof ResourceId id)
                         || !registry.universe(child.type()).contains(id))) return Truth.FALSE;
-                return child.membership().test(f, p, v).not();
+                return child.test(f, p, v).not();
               },
-              child.radius());
+              child.radius(),
+              child.dependencies());
     } else if (e instanceof Name n) {
       result = locals.getOrDefault(n.value(), declarations.get(n.value()));
       if (result == null) throw new Failure("Unknown name: " + n.value(), n.span());
@@ -429,15 +429,20 @@ public final class Compiler {
     BuiltinCompiler.arity(c, primitive.parameters().size());
     var arguments = new ArrayList<Bound>();
     int radius = primitive.radius();
+    var dependencies = primitive.dependencies();
     for (int i = 0; i < c.args().size(); i++) {
       var child = bind(c.args().get(i), primitive.parameters().get(i), locals, depth);
       arguments.add(child);
+      dependencies = dependencies.union(child.dependencies().asBroad());
       long combined = (long) primitive.radius() + child.radius();
       if (combined > maxRadius) throw new Failure("Read radius exceeds budget", c.span());
       radius = Math.max(radius, (int) combined);
     }
     return new Bound(
-        primitive.result(), primitive.implementation().bind(List.copyOf(arguments)), radius);
+        primitive.result(),
+        primitive.implementation().bind(List.copyOf(arguments)),
+        radius,
+        dependencies);
   }
 
   private void validateFunctions(List<Function> added) {
@@ -454,7 +459,11 @@ public final class Compiler {
           else
             locals.put(
                 parameter.name(),
-                new Bound(parameter.type(), (facts, pos, element) -> Truth.UNKNOWN, 0));
+                new Bound(
+                    parameter.type(),
+                    (facts, pos, element) -> Truth.UNKNOWN,
+                    0,
+                    FactDependencies.NONE));
         }
         bind(
             ExpressionAnalysis.substitute(function.body(), integers), function.result(), locals, 0);

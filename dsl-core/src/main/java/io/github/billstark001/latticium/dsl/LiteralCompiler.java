@@ -57,7 +57,8 @@ final class LiteralCompiler {
           type,
           (facts, pos, value) ->
               value instanceof ResourceId id && accepted.contains(id) ? Truth.TRUE : Truth.FALSE,
-          0);
+          0,
+          FactDependencies.NONE);
     }
     if (!symbolic) {
       var legal = new HashSet<BlockState>();
@@ -78,7 +79,8 @@ final class LiteralCompiler {
               value instanceof BlockState state && accepted.contains(state)
                   ? Truth.TRUE
                   : Truth.FALSE,
-          0);
+          0,
+          FactDependencies.NONE);
     }
     var anyStateBlocks = Set.copyOf(allStates);
     stateFilters.replaceAll((ignored, filters) -> List.copyOf(filters));
@@ -92,7 +94,8 @@ final class LiteralCompiler {
             if (matches(state.properties(), filter)) return Truth.TRUE;
           return Truth.FALSE;
         },
-        0);
+        0,
+        FactDependencies.NONE);
   }
 
   private static boolean matches(Map<String, String> actual, Map<String, String> wanted) {
