@@ -41,14 +41,34 @@ public final class MinecraftStateCodec {
     return property.getName(state.getValue(property));
   }
 
+  /** Resolves an exact state in property-count time; missing or invalid properties are rejected. */
   public static Optional<net.minecraft.world.level.block.state.BlockState> state(
       Model.BlockState desired) {
     var block = BuiltInRegistries.BLOCK.getOptional(id(desired.block()));
     if (block.isEmpty()) return Optional.empty();
-    for (var candidate : block.get().getStateDefinition().getPossibleStates()) {
-      if (state(candidate).equals(desired)) return Optional.of(candidate);
+    var definition = block.get().getStateDefinition();
+    // Exact states require every property, not a partial default-state match.
+    if (definition.getProperties().size() != desired.properties().size()) return Optional.empty();
+    var candidate = block.get().defaultBlockState();
+    for (var entry : desired.properties().entrySet()) {
+      var property = definition.getProperty(entry.getKey());
+      if (property == null) return Optional.empty();
+      var updated = applyProperty(candidate, property, entry.getValue());
+      if (updated.isEmpty()) return Optional.empty();
+      candidate = updated.get();
     }
-    return Optional.empty();
+    return Optional.of(candidate);
+  }
+
+  private static <T extends Comparable<T>>
+      Optional<net.minecraft.world.level.block.state.BlockState> applyProperty(
+          net.minecraft.world.level.block.state.BlockState state,
+          Property<T> property,
+          String value) {
+    return property
+        .getValue(value)
+        .filter(parsed -> property.getName(parsed).equals(value))
+        .map(parsed -> state.setValue(property, parsed));
   }
 
   public static Map<String, String> properties(
