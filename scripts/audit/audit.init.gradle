@@ -1,0 +1,22 @@
+allprojects {
+    tasks.withType(JavaExec).configureEach {
+        if (name == 'runClient') {
+            def work = rootProject.file(rootProject.findProperty('auditWorkDir'))
+            jvmArgs "-javaagent:${new File(work, 'audit-agent.jar').absolutePath}"
+            systemProperty 'latticium.audit.classes', new File(work, 'classes').absolutePath
+            systemProperty 'latticium.audit.output', rootProject.findProperty('auditOutput')
+            systemProperty 'latticium.audit.schematics', rootProject.findProperty('auditSchematics') ?: ''
+            systemProperty 'fabric.debug.disableModIds', rootProject.findProperty('auditDisableMods') ?: ''
+        }
+    }
+}
+gradle.projectsEvaluated {
+    def shared = rootProject.project(':versions:shared-mc-26.2')
+    shared.tasks.register('writeAuditClasspath') {
+        dependsOn shared.tasks.named('classes')
+        doLast {
+            def output = new File(rootProject.file(rootProject.findProperty('auditWorkDir')), 'classpath.txt')
+            output.setText(shared.sourceSets.main.compileClasspath.asPath + File.pathSeparator + shared.sourceSets.main.output.asPath, 'UTF-8')
+        }
+    }
+}

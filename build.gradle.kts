@@ -131,6 +131,10 @@ tasks.register("fetchReferenceMods") {
 repositories { mavenCentral() }
 
 spotless {
+    java {
+        googleJavaFormat("1.30.0")
+        target("scripts/audit/**/*.java")
+    }
     kotlin {
         target("**/*.kt")
         targetExclude("**/build/**", "**/.gradle/**", ".tmp/**")
@@ -171,6 +175,37 @@ tasks.register("checkSourceSize") {
 
 tasks.named("formatAll") { finalizedBy("checkSourceSize") }
 
+tasks.register("checkClientChunkAccess") {
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    description = "Reject permissive client-level chunk checks in game adapters and bridges"
+    doLast {
+        // ClientLevel.hasChunk is deliberately permissive; only the chunk cache proves residency.
+        val directLevelCheck =
+            Regex("""\b(?:minecraft\s*\.\s*level|level|world)\s*\.\s*hasChunk\s*\(""")
+        val violations =
+            fileTree(rootDir) {
+                    include("versions/**/src/main/**/*.java", "integrations/**/src/main/**/*.java")
+                    exclude("**/build/**")
+                }
+                .files
+                .flatMap { file ->
+                    file.useLines { lines ->
+                        lines
+                            .mapIndexedNotNull { index, line ->
+                                if (directLevelCheck.containsMatchIn(line))
+                                    "${file.relativeTo(rootDir)}:${index + 1}"
+                                else null
+                            }
+                            .toList()
+                    }
+                }
+        if (violations.isNotEmpty())
+            throw GradleException(
+                "Use getChunkSource().hasChunk for client chunk residency:\n${violations.joinToString("\n")}"
+            )
+    }
+}
+
 tasks.register("lint") {
     group = LifecycleBasePlugin.VERIFICATION_GROUP
     description = "Check Java and Gradle script sources"
@@ -178,11 +213,46 @@ tasks.register("lint") {
         tasks.named("spotlessCheck"),
         subprojects.map { "${it.path}:lint" },
         "checkSourceSize",
+        "checkClientChunkAccess",
     )
 }
 
 tasks.named("check") {
     dependsOn("lint", "testOfficialDataHelpers", subprojects.map { "${it.path}:test" })
+}
+
+// Probes stay outside the mods, but their native API calls must compile during ordinary checks.
+gradle.projectsEvaluated {
+    val auditCompiles =
+        listOf("26.2", "26.3").map { version ->
+            val shared = project(":versions:shared-mc-$version")
+            val main = shared.extensions.getByType<SourceSetContainer>().named("main").get()
+            tasks.register<JavaCompile>("compileGameplayAudit" + version.replace('.', '_')) {
+                group = LifecycleBasePlugin.VERIFICATION_GROUP
+                description = "Compile development-only gameplay probes against Minecraft $version"
+                dependsOn(shared.tasks.named("classes"))
+                source(fileTree("scripts/audit") { include("*.java") })
+                classpath = main.compileClasspath + main.output
+                destinationDirectory.set(layout.buildDirectory.dir("audit-compile/$version"))
+                javaCompiler.set(
+                    shared.extensions.getByType<JavaToolchainService>().compilerFor {
+                        languageVersion.set(JavaLanguageVersion.of(25))
+                    }
+                )
+                sourceCompatibility = "25"
+                targetCompatibility = "25"
+                options.release.set(25)
+                options.encoding = "UTF-8"
+                options.compilerArgs.addAll(listOf("-Xlint:all,-serial,-classfile", "-Werror"))
+            }
+        }
+    val compileAudit =
+        tasks.register("compileGameplayAudit") {
+            group = LifecycleBasePlugin.VERIFICATION_GROUP
+            description = "Compile gameplay probes without launching a client or packaging them"
+            dependsOn(auditCompiles)
+        }
+    tasks.named("check") { dependsOn(compileAudit) }
 }
 
 subprojects {
