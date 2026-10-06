@@ -107,5 +107,6 @@
   "latticium.diagnostics.hint.confirmation": "檢查實際世界狀態和連線，再要求重新掃描。",
   "latticium.diagnostics.hint.changed": "重新掃描前，檢查期間發生的世界變更或藍圖放置變化。",
   "latticium.diagnostics.hint.unsupported": "檢查距離、快捷列物品和目標狀態；部分放置行為目前還無法預測。",
-  "latticium.diagnostics.hint.other": "查看引擎原始詳情；若問題持續，可複製報告。"
+  "latticium.diagnostics.hint.other": "查看引擎原始詳情；若問題持續，可複製報告。",
+  "latticium.registry_reload": "登錄表標籤已變更。目前任務已停止；請重新啟動任務以使用新標籤。"
 }

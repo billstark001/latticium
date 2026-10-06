@@ -1,7 +1,9 @@
 package io.github.billstark001.latticium.mc.mixin;
 
+import io.github.billstark001.latticium.mc.ClientRegistryState;
 import io.github.billstark001.latticium.mc.LatticiumClient;
 import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.network.protocol.common.ClientboundUpdateTagsPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import org.spongepowered.asm.mixin.Mixin;
@@ -12,6 +14,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** Records server packets after vanilla applies them, separating updates from client prediction. */
 @Mixin(ClientPacketListener.class)
 abstract class ClientPacketListenerMixin {
+  @Inject(method = "handleUpdateTags", at = @At("TAIL"))
+  private void latticium$tagsUpdated(ClientboundUpdateTagsPacket packet, CallbackInfo callback) {
+    ClientRegistryState.tagsUpdated();
+  }
+
   @Inject(method = "handleBlockUpdate", at = @At("TAIL"))
   private void latticium$blockUpdate(ClientboundBlockUpdatePacket packet, CallbackInfo callback) {
     LatticiumClient.get().noteServerBlockUpdate(packet.getPos());

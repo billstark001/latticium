@@ -6,13 +6,14 @@ import io.github.billstark001.latticium.planning.Host;
 import io.github.billstark001.latticium.planning.Planner;
 import io.github.billstark001.latticium.planning.Profile;
 import io.github.billstark001.latticium.planning.SectionScanner.Bounds;
-import io.github.billstark001.latticium.planning.SectionScanner.SectionKey;
+import io.github.billstark001.latticium.planning.SelectionBounds;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -34,6 +35,7 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
       long serverRevision) {}
 
   private final Minecraft minecraft;
+  private final ClientLevel world;
   private final Host.SessionId session;
   private final Supplier<Host.Epochs> epochs;
   private final Host.TargetSource targets;
@@ -50,28 +52,31 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
       Compiler.Bound allowedItems,
       Map<String, List<Bounds>> selections) {
     this.minecraft = minecraft;
+    world = minecraft.level;
     this.session = session;
     this.epochs = epochs;
     this.targets = targets;
     this.allowedItems = allowedItems;
-    this.selections = Map.copyOf(selections);
+    this.selections = SelectionBounds.copy(selections);
   }
 
   @Override
   public Host.Submission submit(
       Planner.Proposal step, Host.Preconditions before, Profile.Policy policy) {
     if (!minecraft.isSameThread()) return new Host.Submission.Rejected("Not on client thread");
+    if (cancelRequested) return new Host.Submission.Rejected("Gateway cancelled or closed");
     var level = minecraft.level;
     var player = minecraft.player;
     var mode = minecraft.gameMode;
     if (level == null || player == null || mode == null)
       return new Host.Submission.Deferred("No world or player");
+    if (level != world) return new Host.Submission.Stale("Client world changed");
     if (!session.equals(before.session()) || !before.epochs().equals(epochs.get()))
       return new Host.Submission.Stale("Session or facts changed");
     var pos = before.position();
     if (!MinecraftStateCodec.id(level.dimension().identifier()).equals(pos.dimension()))
       return new Host.Submission.Stale("Dimension changed");
-    if (!level.hasChunk(pos.x() >> 4, pos.z() >> 4))
+    if (!level.getChunkSource().hasChunk(pos.x() >> 4, pos.z() >> 4))
       return new Host.Submission.Deferred("Chunk unloaded");
     var blockPos = new BlockPos(pos.x(), pos.y(), pos.z());
     if (!MinecraftStateCodec.state(level.getBlockState(blockPos)).equals(before.expectedCurrent()))
@@ -98,10 +103,15 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
         return new Host.Submission.Stale("Interaction hotbar slot changed");
       if (step.action() == Planner.Action.PLACE && allowedItems != null) {
         var item = MinecraftStateCodec.id(BuiltInRegistries.ITEM.getKey(stack.getItem()));
-        var section = new SectionKey(pos.dimension(), pos.x() >> 4, pos.y() >> 4, pos.z() >> 4);
         var capture =
-            new MinecraftSectionSource(minecraft, session, epochs.get(), targets, selections)
-                .capture(new Host.SectionCaptureKey(session, section), allowedItems.radius());
+            new MinecraftSectionSource(
+                    minecraft,
+                    session,
+                    epochs.get(),
+                    targets,
+                    selections,
+                    allowedItems.dependencies())
+                .captureAround(session, pos, allowedItems.radius());
         if (!(capture instanceof Host.Capture.Ready ready))
           return new Host.Submission.Deferred("Material facts unavailable");
         var membership = allowedItems.contains(ready.snapshot().facts(), item);
@@ -146,6 +156,11 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
       mode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
 
     } else if (step.action() == Planner.Action.BREAK) {
+      var unsafe = new MinecraftPlacementOracle(minecraft).breakDeferral(pos);
+      if (unsafe != null) return new Host.Submission.Deferred(unsafe);
+      var afterBreak = MinecraftStateCodec.state(level.getFluidState(blockPos).createLegacyBlock());
+      if (!step.result().equals(afterBreak))
+        return new Host.Submission.Stale("Break result changed");
       var face = interaction == null ? Direction.UP : Direction.valueOf(interaction.face().name());
       if (!mode.startDestroyBlock(blockPos, face))
         return new Host.Submission.Deferred("Could not start breaking");
@@ -165,11 +180,12 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     var level = minecraft.level;
     if (action == null || level == null || minecraft.gameMode == null)
       return Host.Observation.CONTRADICTED;
+    if (level != world) return complete(receipt, Host.Observation.CONTRADICTED);
     var pos = action.position();
     if (!MinecraftStateCodec.id(level.dimension().identifier()).equals(pos.dimension()))
       return complete(receipt, Host.Observation.CONTRADICTED);
     var blockPos = new BlockPos(pos.x(), pos.y(), pos.z());
-    if (!level.hasChunk(pos.x() >> 4, pos.z() >> 4))
+    if (!level.getChunkSource().hasChunk(pos.x() >> 4, pos.z() >> 4))
       return level.getGameTime() - action.startedTick() > TIMEOUT_TICKS
           ? complete(receipt, Host.Observation.TIMED_OUT)
           : Host.Observation.STILL_PENDING;
@@ -199,6 +215,7 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
   }
 
   public void close() {
+    cancelRequested = true;
     pending.clear();
     if (minecraft.gameMode != null) minecraft.gameMode.stopDestroyBlock();
   }

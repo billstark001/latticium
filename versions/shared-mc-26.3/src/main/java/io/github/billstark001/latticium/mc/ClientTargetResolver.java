@@ -39,7 +39,7 @@ final class ClientTargetResolver {
     if (profile.profile().target() instanceof Profile.Clear)
       return (pos, requestedSession) -> CLEAR;
     if (profile.profile().target() instanceof Profile.Source)
-      return (pos, requestedSession) -> sourceTarget(pos, requestedSession);
+      return TargetSources.map(targets, this::applyAirPolicy);
     return null;
   }
 
@@ -67,7 +67,14 @@ final class ClientTargetResolver {
                 facts,
                 amounts,
                 items.preferred(),
-                oracle);
+                (item, at) -> {
+                  var normal = oracle.statesFor(item, at);
+                  return normal instanceof MaterialSelector.Outcome.Unsupported
+                          && profile.profile().policy().breakMode()
+                              == Profile.Policy.BreakMode.SELECTED
+                      ? oracle.statesAfterBreak(item, at)
+                      : normal;
+                });
     return switch (choice) {
       case MaterialSelector.Choice.Frozen selected -> selected.target();
       case MaterialSelector.Choice.Deferred deferred -> new TargetCell.Unknown(deferred.reason());
@@ -78,7 +85,10 @@ final class ClientTargetResolver {
   }
 
   private TargetCell sourceTarget(Position pos, Host.SessionId requestedSession) {
-    var target = targets.target(pos, requestedSession);
+    return applyAirPolicy(targets.target(pos, requestedSession));
+  }
+
+  private TargetCell applyAirPolicy(TargetCell target) {
     if (target instanceof TargetCell.Exact exact
         && io.github.billstark001.latticium.dsl.Model.isVanillaAir(exact.state()))
       return ((Profile.Source) profile.profile().target()).includeAir() ? CLEAR : DONT_CARE;

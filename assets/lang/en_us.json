@@ -107,5 +107,6 @@
   "latticium.diagnostics.hint.confirmation": "Check the actual world state and connection, then request a fresh scan.",
   "latticium.diagnostics.hint.changed": "Check intervening world changes or a changed blueprint placement before rescanning.",
   "latticium.diagnostics.hint.unsupported": "Check reach, hotbar items and target state. Some placement behaviors cannot be predicted yet.",
-  "latticium.diagnostics.hint.other": "Inspect the original engine detail and copy a report if the issue persists."
+  "latticium.diagnostics.hint.other": "Inspect the original engine detail and copy a report if the issue persists.",
+  "latticium.registry_reload": "Registry tags changed. The current task was stopped; start it again to use the new tags."
 }

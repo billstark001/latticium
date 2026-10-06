@@ -107,5 +107,6 @@
   "latticium.diagnostics.hint.confirmation": "检查实际世界状态和连接，再请求重新扫描。",
   "latticium.diagnostics.hint.changed": "重新扫描前，检查期间发生的世界改动或蓝图放置变化。",
   "latticium.diagnostics.hint.unsupported": "检查距离、快捷栏物品和目标状态；部分放置行为目前还无法预测。",
-  "latticium.diagnostics.hint.other": "查看引擎原始详情；若问题持续，可复制报告。"
+  "latticium.diagnostics.hint.other": "查看引擎原始详情；若问题持续，可复制报告。",
+  "latticium.registry_reload": "注册表标签已更改。当前任务已停止；请重新启动任务以使用新标签。"
 }

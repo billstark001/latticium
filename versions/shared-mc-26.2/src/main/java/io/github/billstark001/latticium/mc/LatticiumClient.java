@@ -1,6 +1,7 @@
 package io.github.billstark001.latticium.mc;
 
 import io.github.billstark001.latticium.dsl.Compiler;
+import io.github.billstark001.latticium.dsl.FactDependencies;
 import io.github.billstark001.latticium.dsl.Model.*;
 import io.github.billstark001.latticium.planning.ActivationTracker;
 import io.github.billstark001.latticium.planning.Host;
@@ -33,8 +34,7 @@ public final class LatticiumClient {
   private static final TargetCell.Unknown QUERY_TARGET_UNKNOWN =
       new TargetCell.Unknown("Query has no target source");
 
-  private final Map<ResourceId, Host.TargetSource> providers = new HashMap<>();
-  private final Map<ResourceId, BlueprintProvider> blueprints = new HashMap<>();
+  private final BlueprintProviders providers = new BlueprintProviders();
   private final Map<String, List<Bounds>> selections = new HashMap<>();
   private final Map<String, String> profiles = new HashMap<>();
   private final Set<String> enabled = new HashSet<>();
@@ -71,17 +71,27 @@ public final class LatticiumClient {
   }
 
   /** Registers a target source during client initialization; duplicate IDs are rejected. */
-  public synchronized void registerTargetProvider(ResourceId id, Host.TargetSource source) {
-    Objects.requireNonNull(id);
-    Objects.requireNonNull(source);
-    if (providers.putIfAbsent(id, source) != null)
-      throw new IllegalArgumentException("Duplicate target provider: " + id);
+  public void registerTargetProvider(ResourceId id, Host.TargetSource source) {
+    providers.registerTarget(id, source);
   }
 
   /** Registers an active blueprint source and its named finite selection. */
-  public synchronized void registerBlueprintProvider(ResourceId id, BlueprintProvider provider) {
-    registerTargetProvider(id, provider);
-    blueprints.put(id, provider);
+  public void registerBlueprintProvider(ResourceId id, BlueprintProvider provider) {
+    providers.registerBlueprint(id, provider);
+  }
+
+  /** Ends jobs with old bindings while allowing already submitted receipts to settle. */
+  void registryReloaded(Minecraft minecraft) {
+    if (world == null || world != minecraft.level) return;
+    boolean hadJob = job != null;
+    cancel();
+    autoBindings.clear();
+    autoTrackers.clear();
+    autoErrors.clear();
+    activationDirty = true;
+    if (hadJob && minecraft.player != null)
+      minecraft.player.sendSystemMessage(
+          net.minecraft.network.chat.Component.translatable("latticium.registry_reload"));
   }
 
   public void tick(Minecraft minecraft) {
@@ -138,6 +148,7 @@ public final class LatticiumClient {
       return;
     int radius = 0;
     boolean hasActivation = false;
+    var dependencies = FactDependencies.NONE;
     for (var id : enabled.stream().sorted().toList()) {
       if (job != null && !job.isFinished() && !id.equals(activeAutoId)) continue;
       try {
@@ -152,6 +163,7 @@ public final class LatticiumClient {
         if (bound.activation() != null) {
           radius = Math.max(radius, bound.activation().radius());
           hasActivation = true;
+          dependencies = dependencies.union(bound.activation().dependencies());
         }
       } catch (RuntimeException error) {
         autoErrors.put(id, Objects.toString(error.getMessage(), error.getClass().getSimpleName()));
@@ -163,7 +175,7 @@ public final class LatticiumClient {
     activationDirty = false;
     var capture =
         new MinecraftSectionSource(
-                minecraft, session, new Host.Epochs(0, 0, 0, 0, 0, 0), null, selections)
+                minecraft, session, ClientRegistryState.epochs(), null, selections, dependencies)
             .captureAround(session, center, radius);
     if (!(capture instanceof Host.Capture.Ready ready)) return;
     for (var id : enabled.stream().sorted().toList()) {
@@ -303,10 +315,8 @@ public final class LatticiumClient {
   /** Binds a profile to the live 26.2/26.3 registry without starting it. */
   public Profile.Bound compileProfile(Minecraft minecraft, String json) {
     requireWorld(minecraft);
-    return new ProfileReader()
-        .bind(
-            new ProfileReader().read(json),
-            new Compiler(new MinecraftRegistry(minecraft.level), 16));
+    var reader = new ProfileReader();
+    return reader.bind(reader.read(json), new Compiler(new MinecraftRegistry(minecraft.level), 16));
   }
 
   public Map<String, Boolean> capabilities() {
@@ -318,7 +328,7 @@ public final class LatticiumClient {
         "normal_break",
         true,
         "blueprint_provider",
-        !blueprints.isEmpty());
+        providers.hasBlueprint());
   }
 
   /** Read-only bounded scan; the result marks sections that remain unexamined or unavailable. */
@@ -328,7 +338,9 @@ public final class LatticiumClient {
     if (json == null) throw new IllegalArgumentException("Unknown profile: " + id);
     var profile = new ProfileReader().read(json);
     var source =
-        profile.target() instanceof Profile.Source external ? providers.get(external.id()) : null;
+        profile.target() instanceof Profile.Source external
+            ? providers.target(external.id())
+            : null;
     var previewSession = new Host.SessionId();
     return new ClientJob(
             minecraft, previewSession, json, source, jobSelections(profile, previewSession))
@@ -365,7 +377,7 @@ public final class LatticiumClient {
     var source =
         profile.target()
                 instanceof io.github.billstark001.latticium.planning.Profile.Source external
-            ? providers.get(external.id())
+            ? providers.target(external.id())
             : null;
     if (!settling.isEmpty())
       throw new IllegalStateException("Previous submitted action is still settling");
@@ -395,7 +407,7 @@ public final class LatticiumClient {
   private Map<String, List<Bounds>> jobSelections(Profile profile, Host.SessionId jobSession) {
     var jobSelections = new HashMap<>(selections);
     if (profile.target() instanceof Profile.Source external) {
-      var blueprint = blueprints.get(external.id());
+      var blueprint = providers.blueprint(external.id());
       if (blueprint != null) {
         var bounds = blueprint.finiteBounds("active_blueprint", jobSession);
         if (bounds.isEmpty()) throw new IllegalStateException("No active blueprint selection");
@@ -435,13 +447,12 @@ public final class LatticiumClient {
   }
 
   public String status() {
-    var state = job == null ? "idle" : job.status();
-    return state
-        + " enabled="
-        + enabled.size()
-        + " autoErrors="
-        + autoErrors
-        + (storageError.isEmpty() ? "" : " storageError=" + storageError);
+    return "%s enabled=%d autoErrors=%s%s"
+        .formatted(
+            job == null ? "idle" : job.status(),
+            enabled.size(),
+            autoErrors,
+            storageError.isEmpty() ? "" : " storageError=" + storageError);
   }
 
   private void savePreferences() {
@@ -462,7 +473,7 @@ public final class LatticiumClient {
         enabled,
         autoErrors,
         storageError,
-        blueprints.keySet());
+        providers.blueprintIds());
   }
 
   public List<String> profileIds() {

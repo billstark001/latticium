@@ -10,6 +10,7 @@ import io.github.billstark001.latticium.planning.SectionScanner;
 import io.github.billstark001.latticium.planning.SectionScanner.Bounds;
 import io.github.billstark001.latticium.planning.SectionScanner.SectionGroup;
 import io.github.billstark001.latticium.planning.SectionScanner.SectionKey;
+import io.github.billstark001.latticium.planning.SelectionBounds;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -54,9 +55,10 @@ final class RefreshCoordinator {
       Position player) {
     this.profile = profile;
     this.session = session;
-    this.selections = Map.copyOf(selections);
-    scopeReads = RefreshReads.in(Parser.expression(profile.profile().scope()));
-    selectReads = RefreshReads.in(Parser.expression(profile.profile().select().where()));
+    this.selections = SelectionBounds.copy(selections);
+    scopeReads = RefreshReads.in(Parser.expression(profile.profile().scope()), profile.scope());
+    selectReads =
+        RefreshReads.in(Parser.expression(profile.profile().select().where()), profile.select());
     var offsets = new LinkedHashSet<RefreshReads.Offset>();
     offsets.add(ORIGIN); // The action target also depends on the current block.
     offsets.addAll(scopeReads.worldOffsets());

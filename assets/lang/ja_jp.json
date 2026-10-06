@@ -107,5 +107,6 @@
   "latticium.diagnostics.hint.confirmation": "実際のワールドの状態と接続を確認してから、再走査してください。",
   "latticium.diagnostics.hint.changed": "再走査の前に、途中でのワールドの変更や設計図の配置変更を確認してください。",
   "latticium.diagnostics.hint.unsupported": "距離、ホットバーのアイテム、目標状態を確認してください。一部の設置動作はまだ予測できません。",
-  "latticium.diagnostics.hint.other": "エンジンの元の詳細を確認してください。問題が続く場合はレポートをコピーしてください。"
+  "latticium.diagnostics.hint.other": "エンジンの元の詳細を確認してください。問題が続く場合はレポートをコピーしてください。",
+  "latticium.registry_reload": "レジストリのタグが変更されました。現在のタスクは停止しました。新しいタグを使うにはタスクを開始し直してください。"
 }
