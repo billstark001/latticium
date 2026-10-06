@@ -1,6 +1,7 @@
 package io.github.billstark001.latticium.planning;
 
 import io.github.billstark001.latticium.dsl.Compiler;
+import io.github.billstark001.latticium.dsl.FactDependencies;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
 import io.github.billstark001.latticium.dsl.Model.SetType;
 import java.util.List;
@@ -123,6 +124,26 @@ public record Profile(
       Compiler.Bound select,
       Compiler.Bound items,
       Compiler.Bound states) {
+    /** Columns needed to enumerate candidates; the action state is captured separately. */
+    public FactDependencies scanDependencies() {
+      return scope.dependencies().union(select.dependencies());
+    }
+
+    /** Columns needed to recheck eligibility and choose a target/material for one candidate. */
+    public FactDependencies planningDependencies() {
+      var dependencies = scanDependencies().union(FactDependencies.of(FactDependencies.Fact.STATE));
+      if (items != null) dependencies = dependencies.union(items.dependencies());
+      if (states != null) dependencies = dependencies.union(states.dependencies());
+      return dependencies;
+    }
+
+    /** Largest local window needed by any planning-time expression. */
+    public int planningRadius() {
+      return Math.max(
+          Math.max(scope.radius(), select.radius()),
+          Math.max(items == null ? 0 : items.radius(), states == null ? 0 : states.radius()));
+    }
+
     public Bound {
       Objects.requireNonNull(profile, "profile");
       Objects.requireNonNull(scope, "scope");

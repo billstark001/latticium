@@ -1,5 +1,7 @@
 package io.github.billstark001.latticium.planning;
 
+import io.github.billstark001.latticium.dsl.Compiler;
+import io.github.billstark001.latticium.dsl.FactDependencies.Fact;
 import io.github.billstark001.latticium.dsl.Syntax.*;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -59,6 +61,37 @@ public final class RefreshReads {
         collector.broadWorld,
         collector.broadPlayer,
         collector.periodic);
+  }
+
+  /**
+   * Uses expanded bound metadata for world reads; syntax is retained only for player-sphere
+   * geometry. An opaque player dependency falls back to broad movement invalidation.
+   */
+  public static Reads in(Expr expression, Compiler.Bound bound) {
+    var geometry = in(expression);
+    var offsets = new LinkedHashSet<Offset>();
+    boolean broad = false;
+    for (var entry : bound.dependencies().columns().entrySet()) {
+      switch (entry.getKey()) {
+        case STATE, BIOME, FLUID, LIGHT, SOLID -> {
+          if (entry.getValue().broad()) broad = true;
+          for (var offset : entry.getValue().offsets())
+            offsets.add(new Offset(offset.x(), offset.y(), offset.z()));
+        }
+        default -> {}
+      }
+    }
+    if (offsets.size() > MAX_EXACT_OFFSETS) broad = true;
+    if (broad) offsets.clear();
+    return new Reads(
+        offsets,
+        geometry.playerSpheres(),
+        broad,
+        geometry.broadPlayer() || bound.dependencies().needs(Fact.PLAYER) && !geometry.usesPlayer(),
+        geometry.periodic()
+            || bound.dependencies().needs(Fact.LIGHT)
+            || bound.dependencies().needs(Fact.TARGET)
+            || bound.dependencies().needs(Fact.INVENTORY));
   }
 
   private static final class Collector {

@@ -5,6 +5,7 @@ import io.github.billstark001.latticium.dsl.Model.*;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -12,6 +13,10 @@ import java.util.Objects;
 public final class SectionScanner {
   public static final int SECTION_SIZE = 16;
   public static final int SECTION_VOLUME = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
+
+  /** Maximum box/section contributions retained or visited by one grouping operation. */
+  public static final int MAX_GROUP_CONTRIBUTIONS = 1_000_000;
+
   private static final int SECTION_SHIFT = 4;
   private static final int LOCAL_MASK = SECTION_SIZE - 1;
 
@@ -163,7 +168,8 @@ public final class SectionScanner {
   public List<SectionGroup> group(List<Bounds> bounds, int maxSections) {
     if (maxSections <= 0) throw new IllegalArgumentException("Positive section budget required");
     var grouped = new LinkedHashMap<SectionKey, ArrayList<Bounds>>();
-    for (var box : bounds)
+    int visited = 0;
+    for (var box : new LinkedHashSet<>(bounds))
       for (int y = Math.floorDiv(box.minY(), SECTION_SIZE);
           y <= Math.floorDiv(box.maxY(), SECTION_SIZE);
           y++)
@@ -173,9 +179,11 @@ public final class SectionScanner {
           for (int x = Math.floorDiv(box.minX(), SECTION_SIZE);
               x <= Math.floorDiv(box.maxX(), SECTION_SIZE);
               x++) {
+            if (++visited > MAX_GROUP_CONTRIBUTIONS)
+              throw new IllegalArgumentException(
+                  "Scope exceeds " + MAX_GROUP_CONTRIBUTIONS + " section contributions");
             var key = new SectionKey(box.dimension(), x, y, z);
-            var contributions = grouped.computeIfAbsent(key, ignored -> new ArrayList<>(1));
-            if (!contributions.contains(box)) contributions.add(box);
+            grouped.computeIfAbsent(key, ignored -> new ArrayList<>(1)).add(box);
             if (grouped.size() > maxSections)
               throw new IllegalArgumentException("Scope exceeds " + maxSections + " sections");
           }
@@ -184,15 +192,15 @@ public final class SectionScanner {
     return List.copyOf(result);
   }
 
-  /** Unions the three-valued masks from a section's contributing finite bounds. */
+  /** Unions finite domains first, then evaluates each covered cell once. */
   public SectionResult scanGroup(
       SectionGroup group, Compiler.Bound scope, Compiler.Bound select, Facts facts) {
-    SectionResult result = null;
+    var domain = new BitSet(SECTION_VOLUME);
     for (var box : group.bounds()) {
-      var part = scanSection(box, group.key(), scope, select, facts);
-      result = result == null ? part : result.or(part);
+      addDomain(domain, box, group.key());
+      if (domain.cardinality() == SECTION_VOLUME) break;
     }
-    return Objects.requireNonNull(result);
+    return scanDomain(group.key(), domain, scope, select, facts);
   }
 
   /**
@@ -201,36 +209,56 @@ public final class SectionScanner {
    */
   public SectionResult scanSection(
       Bounds bounds, SectionKey key, Compiler.Bound scope, Compiler.Bound select, Facts facts) {
-    if (scope.type() != SetType.POS || select.type() != SetType.POS)
-      throw new IllegalArgumentException("Expected PosSet");
     if (!key.dimension().equals(bounds.dimension()))
       throw new IllegalArgumentException("Section dimension differs from bounds");
+    var domain = new BitSet(SECTION_VOLUME);
+    addDomain(domain, bounds, key);
+    return scanDomain(key, domain, scope, select, facts);
+  }
+
+  private static void addDomain(BitSet domain, Bounds bounds, SectionKey key) {
+    long baseX = (long) key.x() * SECTION_SIZE,
+        baseY = (long) key.y() * SECTION_SIZE,
+        baseZ = (long) key.z() * SECTION_SIZE;
+    long minX = Math.max(baseX, bounds.minX()), maxX = Math.min(baseX + LOCAL_MASK, bounds.maxX());
+    if (minX > maxX) return;
+    for (long y = Math.max(baseY, bounds.minY());
+        y <= Math.min(baseY + LOCAL_MASK, bounds.maxY());
+        y++)
+      for (long z = Math.max(baseZ, bounds.minZ());
+          z <= Math.min(baseZ + LOCAL_MASK, bounds.maxZ());
+          z++) {
+        int start =
+            (int)
+                (((y - baseY) << (2 * SECTION_SHIFT))
+                    | ((z - baseZ) << SECTION_SHIFT)
+                    | (minX - baseX));
+        domain.set(start, start + (int) (maxX - minX + 1));
+      }
+  }
+
+  private static SectionResult scanDomain(
+      SectionKey key, BitSet domain, Compiler.Bound scope, Compiler.Bound select, Facts facts) {
+    if (scope.type() != SetType.POS || select.type() != SetType.POS)
+      throw new IllegalArgumentException("Expected PosSet");
     var trueMask = new BitSet(SECTION_VOLUME);
     var knownMask = new BitSet(SECTION_VOLUME);
     knownMask.set(0, SECTION_VOLUME);
     long baseX = (long) key.x() * SECTION_SIZE,
         baseY = (long) key.y() * SECTION_SIZE,
         baseZ = (long) key.z() * SECTION_SIZE;
-    for (long y = Math.max(baseY, bounds.minY());
-        y <= Math.min(baseY + LOCAL_MASK, bounds.maxY());
-        y++)
-      for (long z = Math.max(baseZ, bounds.minZ());
-          z <= Math.min(baseZ + LOCAL_MASK, bounds.maxZ());
-          z++)
-        for (long x = Math.max(baseX, bounds.minX());
-            x <= Math.min(baseX + LOCAL_MASK, bounds.maxX());
-            x++) {
-          int index =
-              (int)
-                  (((y - baseY) << (2 * SECTION_SHIFT))
-                      | ((z - baseZ) << SECTION_SHIFT)
-                      | (x - baseX));
-          var p = new Position(bounds.dimension(), (int) x, (int) y, (int) z);
-          Truth inScope = scope.at(facts, p);
-          Truth value = inScope == Truth.FALSE ? Truth.FALSE : inScope.and(select.at(facts, p));
-          if (value == Truth.UNKNOWN) knownMask.clear(index);
-          if (value == Truth.TRUE) trueMask.set(index);
-        }
+    for (int index = domain.nextSetBit(0); index >= 0; index = domain.nextSetBit(index + 1)) {
+      var p =
+          new Position(
+              key.dimension(),
+              (int) (baseX + (index & LOCAL_MASK)),
+              (int) (baseY + (index >> (2 * SECTION_SHIFT))),
+              (int) (baseZ + ((index >> SECTION_SHIFT) & LOCAL_MASK)));
+      Truth inScope = scope.at(facts, p);
+      Truth value = inScope == Truth.FALSE ? Truth.FALSE : inScope.and(select.at(facts, p));
+      if (value == Truth.UNKNOWN) knownMask.clear(index);
+      if (value == Truth.TRUE) trueMask.set(index);
+    }
     return new SectionResult(key, trueMask, knownMask);
   }
 }
