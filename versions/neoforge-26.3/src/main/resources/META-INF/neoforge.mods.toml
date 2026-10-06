@@ -6,7 +6,7 @@ license="MIT"
 modId="latticium"
 version="${modVersion}"
 displayName="Latticium"
-logoFile="assets/latticium/icon.png"
+iconFile="assets/latticium/icon.png"
 description="Client construction engine"
 
 [[mixins]]
