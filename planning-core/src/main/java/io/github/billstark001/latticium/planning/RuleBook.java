@@ -11,7 +11,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 /** Declarative, exact-state offline rules. Native placement behavior remains an oracle. */
@@ -129,7 +128,7 @@ public final class RuleBook {
       var matching = byBefore.getOrDefault(current, List.of());
       if (matching.isEmpty())
         return new Planner.Prediction.NoLegalPlacement("No matching declared transition");
-      var before = overlay(base, pos, current, goal);
+      var before = StateOverlay.at(base, pos, current, goal);
       boolean unknown = false;
       for (var rule : matching) {
         Truth when = rule.when() == null ? Truth.TRUE : rule.when().at(before, pos);
@@ -142,7 +141,7 @@ public final class RuleBook {
         }
         if (allowed == Truth.FALSE) continue;
         if (rule.verify() != null) {
-          Truth verified = rule.verify().at(overlay(base, pos, rule.after(), goal), pos);
+          Truth verified = rule.verify().at(StateOverlay.at(base, pos, rule.after(), goal), pos);
           if (verified == Truth.UNKNOWN) {
             unknown = true;
             continue;
@@ -158,65 +157,6 @@ public final class RuleBook {
           ? new Planner.Prediction.Unknown("Rule facts unavailable")
           : new Planner.Prediction.NoLegalPlacement("No matching declared transition");
     };
-  }
-
-  private static Facts overlay(Facts source, Position at, BlockState state, TargetCell target) {
-    return new Facts() {
-      private Optional<WorldCell> originalAt;
-      private Boolean changed;
-
-      private Optional<WorldCell> originalAt() {
-        if (originalAt == null) originalAt = source.world(at);
-        return originalAt;
-      }
-
-      private boolean speculative() {
-        if (changed == null) {
-          var original = originalAt();
-          changed = original.isEmpty() || !state.equals(original.get().state());
-        }
-        return changed;
-      }
-
-      public Optional<WorldCell> world(Position p) {
-        if (!p.equals(at)) {
-          var neighbor = source.world(p);
-          if (!faceNeighbor(at, p) || !speculative()) return neighbor;
-          return neighbor.map(cell -> new WorldCell(cell.state(), cell.biome(), null, null, null));
-        }
-        var original = originalAt();
-        if (!speculative()) return original;
-        // Fluid, light and solidity can change with the block or its neighbors. A speculative
-        // transition only establishes the block state; keep the independent biome fact.
-        return Optional.of(
-            new WorldCell(state, original.map(WorldCell::biome).orElse(null), null, null, null));
-      }
-
-      public TargetCell target(Position p) {
-        return p.equals(at) ? target : source.target(p);
-      }
-
-      public Optional<Position> player() {
-        return source.player();
-      }
-
-      public Optional<Set<ResourceId>> inventory() {
-        return source.inventory();
-      }
-
-      public Truth selection(String name, Position p) {
-        return source.selection(name, p);
-      }
-    };
-  }
-
-  private static boolean faceNeighbor(Position a, Position b) {
-    if (!a.dimension().equals(b.dimension())) return false;
-    long distance =
-        Math.abs((long) a.x() - b.x())
-            + Math.abs((long) a.y() - b.y())
-            + Math.abs((long) a.z() - b.z());
-    return distance == 1;
   }
 
   private static Compiler.Bound guard(ObjectNode n, String key, Compiler compiler, String path) {

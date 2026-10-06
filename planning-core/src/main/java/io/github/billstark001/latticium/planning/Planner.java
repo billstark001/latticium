@@ -169,67 +169,137 @@ public final class Planner {
       Profile.Policy policy,
       Oracle oracle,
       int maxNodes) {
-    Objects.requireNonNull(pos, "pos");
-    Objects.requireNonNull(current, "current");
-    Objects.requireNonNull(goal, "goal");
-    Objects.requireNonNull(policy, "policy");
-    Objects.requireNonNull(oracle, "oracle");
-    if (maxNodes <= 0) throw new IllegalArgumentException("Positive node budget required");
-    if (goal instanceof TargetCell.Unknown x) return new Result.Deferred(x.reason());
-    if (goal instanceof TargetCell.DontCare) return new Result.Complete();
-    if (matches(current, goal)) return new Result.Complete();
-    var queue = new PriorityQueue<Node>(Comparator.comparing(Node::cost));
-    var best = new HashMap<BlockState, Cost>();
-    queue.add(new Node(current, new Cost(0, 0, 0), null, null));
-    best.put(current, new Cost(0, 0, 0));
-    int visited = 0;
-    String last = "No allowed transition";
-    String unknownReason = null;
-    while (!queue.isEmpty()) {
-      Node node = queue.remove();
-      if (!node.cost().equals(best.get(node.state()))) continue;
-      // A goal is optimal only when it leaves the cost-ordered queue.
-      if (matches(node.state(), goal)) return new Result.Ready(current, pathTo(node), node.cost());
-      if (visited++ >= maxNodes) return new Result.Deferred("Search budget exhausted");
-      Prediction prediction;
-      try {
-        prediction = Objects.requireNonNull(oracle.predict(pos, node.state(), goal));
-      } catch (RuntimeException error) {
-        if (unknownReason == null)
-          unknownReason = "Placement oracle unavailable: " + error.getClass().getSimpleName();
-        continue;
-      }
-      if (prediction instanceof Prediction.Unknown x) {
-        if (unknownReason == null) unknownReason = x.reason();
-        continue;
-      }
-      if (prediction instanceof Prediction.Unsupported x) {
-        last = x.reason();
-        continue;
-      }
-      if (prediction instanceof Prediction.NoLegalPlacement x) {
-        last = x.reason();
-        continue;
-      }
-      for (var step : ((Prediction.Proposals) prediction).steps()) {
-        if (step.action() == Action.BREAK && policy.breakMode() == Profile.Policy.BreakMode.DENY)
-          continue;
-        if (!step.affectsOnly(pos))
-          continue; // no undeclared collateral effects in single-cell planner
-        Cost cost;
-        try {
-          cost = node.cost().plus(step.cost());
-        } catch (ArithmeticException overflow) {
-          continue;
-        }
-        if (cost.actions() > policy.maxActionsPerActivation()) continue;
-        var previous = best.get(step.result());
-        if (previous != null && previous.compareTo(cost) <= 0) continue;
-        best.put(step.result(), cost);
-        queue.add(new Node(step.result(), cost, node, step));
+    return start(pos, current, goal, policy, oracle).advance(maxNodes);
+  }
+
+  /** Maximum retained states/frontier entries; an exhausted memory limit remains Deferred. */
+  public static final int MAX_SEARCH_STATES = 65_536;
+
+  /**
+   * Starts a resumable search over one frozen input view. The oracle must keep the same facts,
+   * inventory, rules and prediction behavior throughout its lifetime. The host must discard the
+   * search when any relevant input changes; a search is never an authorization to act on stale
+   * data. Calls and returned proposals are pure planning work and are not thread-safe.
+   */
+  public Search start(
+      Position pos, BlockState current, TargetCell goal, Profile.Policy policy, Oracle oracle) {
+    return new Search(pos, current, goal, policy, oracle);
+  }
+
+  /** Retains the Dijkstra frontier between bounded work slices instead of repeating expansions. */
+  public static final class Search {
+    private final Position pos;
+    private final BlockState initial;
+    private final TargetCell goal;
+    private final Profile.Policy policy;
+    private final Oracle oracle;
+    private final PriorityQueue<Node> queue = new PriorityQueue<>(Comparator.comparing(Node::cost));
+    private final HashMap<BlockState, Cost> best = new HashMap<>();
+    private String last = "No allowed transition";
+    private String unknownReason;
+    private Result terminal;
+    private long expanded;
+
+    private Search(
+        Position pos, BlockState current, TargetCell goal, Profile.Policy policy, Oracle oracle) {
+      this.pos = Objects.requireNonNull(pos, "pos");
+      this.initial = Objects.requireNonNull(current, "current");
+      this.goal = Objects.requireNonNull(goal, "goal");
+      this.policy = Objects.requireNonNull(policy, "policy");
+      this.oracle = Objects.requireNonNull(oracle, "oracle");
+      if (goal instanceof TargetCell.Unknown unknown)
+        terminal = new Result.Deferred(unknown.reason());
+      else if (goal instanceof TargetCell.DontCare || matches(current, goal))
+        terminal = new Result.Complete();
+      else {
+        var zero = new Cost(0, 0, 0);
+        queue.add(new Node(current, zero, null, null));
+        best.put(current, zero);
       }
     }
-    return unknownReason == null ? new Result.NoPlan(last) : new Result.Deferred(unknownReason);
+
+    /** True only for a work-budget deferral with a frontier that can still make progress. */
+    public boolean pending() {
+      return terminal == null;
+    }
+
+    /** Number of oracle calls already made across all slices, including unavailable predictions. */
+    public long expandedNodes() {
+      return expanded;
+    }
+
+    /**
+     * Expands at most {@code maxNodes} additional states. Budget exhaustion preserves the next
+     * unexpanded node. Unknown predictions and exhausted graphs terminate this frozen search;
+     * obtaining new facts requires a new search. A terminal result is stable on repeated calls.
+     */
+    public Result advance(int maxNodes) {
+      if (maxNodes <= 0) throw new IllegalArgumentException("Positive node budget required");
+      if (terminal != null) return terminal;
+      int visited = 0;
+      while (!queue.isEmpty()) {
+        Node node = queue.peek();
+        if (!node.cost().equals(best.get(node.state()))) {
+          queue.remove();
+          continue;
+        }
+        // A goal is optimal only when it leaves the cost-ordered queue.
+        if (matches(node.state(), goal))
+          return finish(new Result.Ready(initial, pathTo(node), node.cost()));
+        if (visited >= maxNodes) return new Result.Deferred("Search budget exhausted");
+        queue.remove();
+        visited++;
+        expanded++;
+        Prediction prediction;
+        try {
+          prediction = Objects.requireNonNull(oracle.predict(pos, node.state(), goal));
+        } catch (RuntimeException error) {
+          if (unknownReason == null)
+            unknownReason = "Placement oracle unavailable: " + error.getClass().getSimpleName();
+          continue;
+        }
+        if (prediction instanceof Prediction.Unknown unknown) {
+          if (unknownReason == null) unknownReason = unknown.reason();
+          continue;
+        }
+        if (prediction instanceof Prediction.Unsupported unsupported) {
+          last = unsupported.reason();
+          continue;
+        }
+        if (prediction instanceof Prediction.NoLegalPlacement unavailable) {
+          last = unavailable.reason();
+          continue;
+        }
+        for (var step : ((Prediction.Proposals) prediction).steps()) {
+          if (step.action() == Action.BREAK && policy.breakMode() == Profile.Policy.BreakMode.DENY)
+            continue;
+          if (!step.affectsOnly(pos)) continue;
+          Cost cost;
+          try {
+            cost = node.cost().plus(step.cost());
+          } catch (ArithmeticException overflow) {
+            continue;
+          }
+          if (cost.actions() > policy.maxActionsPerActivation()) continue;
+          var previous = best.get(step.result());
+          if (previous != null && previous.compareTo(cost) <= 0) continue;
+          if ((previous == null && best.size() >= MAX_SEARCH_STATES)
+              || queue.size() >= MAX_SEARCH_STATES)
+            return finish(new Result.Deferred("Search state limit exceeded"));
+          best.put(step.result(), cost);
+          queue.add(new Node(step.result(), cost, node, step));
+        }
+      }
+      return finish(
+          unknownReason == null ? new Result.NoPlan(last) : new Result.Deferred(unknownReason));
+    }
+
+    private Result finish(Result result) {
+      terminal = result;
+      queue.clear();
+      best.clear();
+      return result;
+    }
   }
 
   private static boolean matches(BlockState state, TargetCell goal) {
