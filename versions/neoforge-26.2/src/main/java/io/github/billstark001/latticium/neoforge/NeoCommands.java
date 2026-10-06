@@ -7,6 +7,8 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
 import io.github.billstark001.latticium.mc.CommandProfiles;
 import io.github.billstark001.latticium.mc.LatticiumClient;
+import io.github.billstark001.latticium.mc.ui.ClientConfig;
+import io.github.billstark001.latticium.mc.ui.LatticiumScreen;
 import java.nio.file.Files;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.CommandSourceStack;
@@ -22,6 +24,21 @@ public final class NeoCommands {
         .getDispatcher()
         .register(
             literal("latticium")
+                .then(
+                    literal("ui")
+                        .executes(
+                            c -> {
+                              LatticiumScreen.open();
+                              return 1;
+                            }))
+                .then(
+                    literal("settings")
+                        .executes(
+                            c -> {
+                              var minecraft = Minecraft.getInstance();
+                              minecraft.gui.setScreen(ClientConfig.screen(minecraft.gui.screen()));
+                              return 1;
+                            }))
                 .then(
                     literal("pos1")
                         .executes(

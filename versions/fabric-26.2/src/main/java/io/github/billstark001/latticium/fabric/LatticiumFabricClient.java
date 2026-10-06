@@ -7,23 +7,57 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import io.github.billstark001.latticium.dsl.Model.ResourceId;
 import io.github.billstark001.latticium.mc.CommandProfiles;
 import io.github.billstark001.latticium.mc.LatticiumClient;
+import io.github.billstark001.latticium.mc.ui.ClientConfig;
+import io.github.billstark001.latticium.mc.ui.LatticiumHud;
+import io.github.billstark001.latticium.mc.ui.LatticiumScreen;
+import io.github.billstark001.latticium.mc.ui.UiControls;
 import java.io.IOException;
 import java.nio.file.Files;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 /** Fabric lifecycle and local command surface. */
 public final class LatticiumFabricClient implements ClientModInitializer {
   @Override
   public void onInitializeClient() {
-    ClientTickEvents.END_CLIENT_TICK.register(LatticiumClient.get()::tick);
+    ClientConfig.register();
+    UiControls.mappings().forEach(KeyMappingHelper::registerKeyMapping);
+    HudElementRegistry.attachElementBefore(
+        VanillaHudElements.CHAT,
+        Identifier.fromNamespaceAndPath("latticium", "status"),
+        LatticiumHud::extract);
+    ClientTickEvents.END_CLIENT_TICK.register(
+        minecraft -> {
+          LatticiumClient.get().tick(minecraft);
+          UiControls.tick(minecraft);
+        });
     ClientCommandRegistrationCallback.EVENT.register(
         (dispatcher, context) ->
             dispatcher.register(
                 literal("latticium")
+                    .then(
+                        literal("ui")
+                            .executes(
+                                c -> {
+                                  LatticiumScreen.open();
+                                  return 1;
+                                }))
+                    .then(
+                        literal("settings")
+                            .executes(
+                                c -> {
+                                  var minecraft = Minecraft.getInstance();
+                                  minecraft.gui.setScreen(
+                                      ClientConfig.screen(minecraft.gui.screen()));
+                                  return 1;
+                                }))
                     .then(
                         literal("pos1")
                             .executes(

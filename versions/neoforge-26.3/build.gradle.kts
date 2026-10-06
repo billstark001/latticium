@@ -29,4 +29,11 @@ neoForge {
 
 dependencies {
     implementation(project(":versions:shared-mc-26.3"))
+    implementation("me.shedaniel.cloth:cloth-config-neoforge:26.3.159")
+    jarJar("me.shedaniel.cloth:cloth-config-neoforge:26.3.159") {
+        version {
+            strictly("[26.3.159,26.4)")
+            prefer("26.3.159")
+        }
+    }
 }

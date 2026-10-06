@@ -11,3 +11,10 @@ description="Client construction engine"
 
 [[mixins]]
 config="latticium.mixins.json"
+
+[[dependencies.latticium]]
+modId="cloth_config"
+type="required"
+versionRange="[26.3.159,)"
+ordering="AFTER"
+side="CLIENT"

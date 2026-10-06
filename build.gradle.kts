@@ -191,7 +191,13 @@ subprojects {
     version = rootProject.version
     apply(plugin = "java-library")
     apply(plugin = "com.diffplug.spotless")
-    repositories { mavenCentral() }
+    repositories {
+        mavenCentral()
+        if (!coreModule) {
+            maven("https://maven.shedaniel.me/")
+            maven("https://maven.terraformersmc.com/")
+        }
+    }
     configure<com.diffplug.gradle.spotless.SpotlessExtension> {
         java {
             googleJavaFormat("1.30.0")
@@ -225,6 +231,13 @@ subprojects {
     tasks.withType<ProcessResources>().configureEach {
         val releaseVersion = project.version.toString()
         inputs.property("releaseVersion", releaseVersion)
+        if (
+            project.path.startsWith(":versions:shared-mc-") ||
+                project.path.startsWith(":versions:fabric-") ||
+                project.path.startsWith(":versions:neoforge-")
+        ) {
+            from(rootProject.file("assets/lang")) { into("assets/latticium/lang") }
+        }
         if (
             project.path.startsWith(":versions:fabric-") ||
                 project.path.startsWith(":versions:neoforge-")
