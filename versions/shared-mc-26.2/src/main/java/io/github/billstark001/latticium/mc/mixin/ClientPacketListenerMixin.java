@@ -21,12 +21,12 @@ abstract class ClientPacketListenerMixin {
 
   @Inject(method = "handleBlockUpdate", at = @At("TAIL"))
   private void latticium$blockUpdate(ClientboundBlockUpdatePacket packet, CallbackInfo callback) {
-    LatticiumClient.get().noteServerBlockUpdate(packet.getPos());
+    LatticiumClient.get().noteServerBlockUpdate(packet.getPos(), packet.getBlockState());
   }
 
   @Inject(method = "handleChunkBlocksUpdate", at = @At("TAIL"))
   private void latticium$sectionUpdate(
       ClientboundSectionBlocksUpdatePacket packet, CallbackInfo callback) {
-    packet.runUpdates((pos, state) -> LatticiumClient.get().noteServerBlockUpdate(pos));
+    packet.runUpdates((pos, state) -> LatticiumClient.get().noteServerBlockUpdate(pos, state));
   }
 }

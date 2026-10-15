@@ -2,11 +2,13 @@ package io.github.billstark001.latticium.mc;
 
 import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
+import io.github.billstark001.latticium.planning.ActionConfirmation;
 import io.github.billstark001.latticium.planning.Host;
 import io.github.billstark001.latticium.planning.Planner;
 import io.github.billstark001.latticium.planning.Profile;
 import io.github.billstark001.latticium.planning.SectionScanner.Bounds;
 import io.github.billstark001.latticium.planning.SelectionBounds;
+import io.github.billstark001.latticium.planning.TargetSources;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,8 +33,8 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
       Position position,
       Planner.Action action,
       Planner.Interaction interaction,
-      long startedTick,
-      long serverRevision) {}
+      TargetCell target,
+      ActionConfirmation confirmation) {}
 
   private final Minecraft minecraft;
   private final ClientLevel world;
@@ -55,7 +57,7 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     world = minecraft.level;
     this.session = session;
     this.epochs = epochs;
-    this.targets = targets;
+    this.targets = targets == null ? null : TargetSources.guarded(targets, session);
     this.allowedItems = allowedItems;
     this.selections = SelectionBounds.copy(selections);
   }
@@ -90,7 +92,8 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     if (!player.isWithinBlockInteractionRange(blockPos, 0))
       return new Host.Submission.Deferred("Outside interaction reach");
     var interaction = step.interaction();
-    long serverRevision = LatticiumClient.get().serverRevision(pos);
+    var update = LatticiumClient.get().serverUpdate(pos);
+    long serverRevision = update == null ? 0 : update.revision();
     if (step.action() == Planner.Action.PLACE || step.action() == Planner.Action.INTERACT) {
       if (interaction == null)
         return new Host.Submission.Rejected("Interaction has no click context");
@@ -100,7 +103,8 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
       var stack = player.getInventory().getItem(slot);
       if (step.action() == Planner.Action.PLACE && stack.isEmpty()
           || step.action() == Planner.Action.INTERACT && !stack.isEmpty())
-        return new Host.Submission.Stale("Interaction hotbar slot changed");
+        // Temporary slot availability must preserve a confirmed partial target for replanning.
+        return new Host.Submission.Deferred("Interaction needs a different hotbar slot");
       if (step.action() == Planner.Action.PLACE && allowedItems != null) {
         var item = MinecraftStateCodec.id(BuiltInRegistries.ITEM.getKey(stack.getItem()));
         var capture =
@@ -133,7 +137,7 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
           || proposals.steps().stream()
               .noneMatch(
                   p -> interaction.equals(p.interaction()) && step.result().equals(p.result())))
-        return new Host.Submission.Stale("Placement context changed");
+        return new Host.Submission.Deferred("Placement context needs replanning");
       var face = Direction.valueOf(interaction.face().name());
       var clicked = interaction.clicked();
       if (clicked != null && !clicked.dimension().equals(pos.dimension()))
@@ -168,7 +172,13 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     var receipt = new Host.Receipt(UUID.randomUUID(), session);
     pending.put(
         receipt.id(),
-        new Pending(pos, step.action(), interaction, level.getGameTime(), serverRevision));
+        new Pending(
+            pos,
+            step.action(),
+            interaction,
+            before.expectedTarget(),
+            new ActionConfirmation(
+                before.expectedCurrent(), step.result(), level.getGameTime(), serverRevision)));
     return new Host.Submission.Accepted(receipt);
   }
 
@@ -178,22 +188,28 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     if (!session.equals(receipt.session())) return Host.Observation.CONTRADICTED;
     var action = pending.get(receipt.id());
     var level = minecraft.level;
-    if (action == null || level == null || minecraft.gameMode == null)
-      return Host.Observation.CONTRADICTED;
+    if (action == null) return Host.Observation.CONTRADICTED;
+    if (level == null || minecraft.gameMode == null)
+      return complete(receipt, Host.Observation.CONTRADICTED);
     if (level != world) return complete(receipt, Host.Observation.CONTRADICTED);
     var pos = action.position();
+    if (!action.confirmation().expected().equals(expected)
+        || targets != null && !targets.target(pos, session).equals(action.target()))
+      return complete(receipt, Host.Observation.CONTRADICTED);
     if (!MinecraftStateCodec.id(level.dimension().identifier()).equals(pos.dimension()))
       return complete(receipt, Host.Observation.CONTRADICTED);
     var blockPos = new BlockPos(pos.x(), pos.y(), pos.z());
-    if (!level.getChunkSource().hasChunk(pos.x() >> 4, pos.z() >> 4))
-      return level.getGameTime() - action.startedTick() > TIMEOUT_TICKS
-          ? complete(receipt, Host.Observation.TIMED_OUT)
-          : Host.Observation.STILL_PENDING;
-    if (LatticiumClient.get().serverRevision(pos) > action.serverRevision()
-        && MinecraftStateCodec.state(level.getBlockState(blockPos)).equals(expected))
-      return complete(receipt, Host.Observation.CONFIRMED);
-    if (level.getGameTime() - action.startedTick() > TIMEOUT_TICKS)
-      return complete(receipt, Host.Observation.TIMED_OUT);
+    boolean loaded = level.getChunkSource().hasChunk(pos.x() >> 4, pos.z() >> 4);
+    var observation =
+        action
+            .confirmation()
+            .observe(
+                loaded ? MinecraftStateCodec.state(level.getBlockState(blockPos)) : null,
+                LatticiumClient.get().serverUpdate(pos),
+                level.getGameTime(),
+                TIMEOUT_TICKS);
+    if (observation != Host.Observation.STILL_PENDING) return complete(receipt, observation);
+    if (!loaded) return Host.Observation.STILL_PENDING;
     if (action.action() == Planner.Action.BREAK && !cancelRequested) {
       var face =
           action.interaction() == null
@@ -205,7 +221,9 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
   }
 
   private Host.Observation complete(Host.Receipt receipt, Host.Observation result) {
-    pending.remove(receipt.id());
+    var action = pending.remove(receipt.id());
+    if (action != null && action.action() == Planner.Action.BREAK && minecraft.gameMode != null)
+      minecraft.gameMode.stopDestroyBlock();
     return result;
   }
 

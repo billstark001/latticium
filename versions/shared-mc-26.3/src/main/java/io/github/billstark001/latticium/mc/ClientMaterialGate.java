@@ -3,12 +3,15 @@ package io.github.billstark001.latticium.mc;
 import io.github.billstark001.latticium.dsl.Compiler;
 import io.github.billstark001.latticium.dsl.Model.*;
 import io.github.billstark001.latticium.planning.Planner;
+import io.github.billstark001.latticium.planning.StateOverlay;
 import java.util.ArrayList;
+import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 
 /** Applies bound material eligibility to native placement proposals for one fact snapshot. */
 final class ClientMaterialGate {
+  private static final BlockState AIR = new BlockState(ResourceId.parse("minecraft:air"), Map.of());
   private final Minecraft minecraft;
   private final MinecraftPlacementOracle oracle;
   private final Compiler.Bound allowedItems;
@@ -21,12 +24,17 @@ final class ClientMaterialGate {
   }
 
   Planner.Oracle forFacts(Facts facts) {
-    return (pos, current, target) -> predict(pos, current, target, facts);
+    return (pos, current, target) -> filter(oracle.predict(pos, current, target), facts);
   }
 
-  private Planner.Prediction predict(
-      Position pos, BlockState current, TargetCell target, Facts facts) {
-    var predicted = oracle.predict(pos, current, target);
+  boolean hasPlacementAfterBreak(Position pos, BlockState target, Facts facts) {
+    var afterBreak = StateOverlay.at(facts, pos, AIR, new TargetCell.Exact(target));
+    return filter(oracle.predictAfterBreak(pos, target), afterBreak)
+            instanceof Planner.Prediction.Proposals proposals
+        && !proposals.steps().isEmpty();
+  }
+
+  private Planner.Prediction filter(Planner.Prediction predicted, Facts facts) {
     if (allowedItems == null || !(predicted instanceof Planner.Prediction.Proposals proposals))
       return predicted;
     var allowed = new ArrayList<Planner.Proposal>();

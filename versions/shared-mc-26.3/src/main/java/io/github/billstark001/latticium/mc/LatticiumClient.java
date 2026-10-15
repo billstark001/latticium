@@ -8,11 +8,11 @@ import io.github.billstark001.latticium.planning.Host;
 import io.github.billstark001.latticium.planning.Profile;
 import io.github.billstark001.latticium.planning.ProfileReader;
 import io.github.billstark001.latticium.planning.SectionScanner.Bounds;
+import io.github.billstark001.latticium.planning.ServerUpdates;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -41,14 +41,7 @@ public final class LatticiumClient {
   private final Map<String, Profile.Bound> autoBindings = new HashMap<>();
   private final Map<String, ActivationTracker> autoTrackers = new HashMap<>();
   private final Map<String, String> autoErrors = new HashMap<>();
-  private final Map<Position, Long> serverUpdates =
-      new LinkedHashMap<>(16, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<Position, Long> eldest) {
-          return size() > MAX_TRACKED_BLOCK_UPDATES;
-        }
-      };
-  private long serverUpdateSequence;
+  private final ServerUpdates serverUpdates = new ServerUpdates(MAX_TRACKED_BLOCK_UPDATES);
   private ClientLevel world;
   private Host.SessionId session;
   private ClientJob job;
@@ -126,7 +119,6 @@ public final class LatticiumClient {
       activationDirty = true;
       activationTicks = 0;
       serverUpdates.clear();
-      serverUpdateSequence = 0;
       firstCorner = null;
       secondCorner = null;
     }
@@ -213,13 +205,19 @@ public final class LatticiumClient {
     return pos;
   }
 
-  /** Called after a vanilla server block-update packet has been applied to the client world. */
+  /** Refresh hint without a packet payload; this cannot confirm an accepted action. */
   public void noteServerBlockUpdate(BlockPos blockPos) {
+    noteServerBlockUpdate(blockPos, null);
+  }
+
+  /** Records the packet state, which vanilla may temporarily hide behind local prediction. */
+  public void noteServerBlockUpdate(
+      BlockPos blockPos, net.minecraft.world.level.block.state.BlockState state) {
     var minecraft = Minecraft.getInstance();
     if (!minecraft.isSameThread() || world == null || world != minecraft.level) return;
     var dimension = MinecraftStateCodec.id(world.dimension().identifier());
     var position = new Position(dimension, blockPos.getX(), blockPos.getY(), blockPos.getZ());
-    serverUpdates.put(position, ++serverUpdateSequence);
+    if (state != null) serverUpdates.record(position, MinecraftStateCodec.state(state));
     if (job != null) job.noteBlockUpdate(position);
     if (lastActivationPlayer != null
         && lastActivationPlayer.dimension().equals(position.dimension())
@@ -229,8 +227,8 @@ public final class LatticiumClient {
       activationDirty = true;
   }
 
-  long serverRevision(Position pos) {
-    return serverUpdates.getOrDefault(pos, 0L);
+  ServerUpdates.Update serverUpdate(Position pos) {
+    return serverUpdates.get(pos);
   }
 
   public void saveSelection(Minecraft minecraft, String name) {

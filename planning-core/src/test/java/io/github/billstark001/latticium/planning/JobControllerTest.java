@@ -209,6 +209,43 @@ class JobControllerTest {
   }
 
   @Test
+  void temporaryMaterialDeferralPreservesConfirmedProgress() {
+    var session = new Host.SessionId();
+    var pos = new Position(ResourceId.parse("overworld"), 0, 64, 0);
+    var one = new BlockState(ResourceId.parse("snow"), Map.of("layers", "1"));
+    var two = new BlockState(ResourceId.parse("snow"), Map.of("layers", "2"));
+    var three = new BlockState(ResourceId.parse("snow"), Map.of("layers", "3"));
+    var first =
+        new Planner.Proposal(
+            Planner.Action.PLACE, two, Set.of(pos), new Planner.Cost(1, 1, 0), "snow");
+    var second =
+        new Planner.Proposal(Planner.Action.PLACE, three, Set.of(pos), first.cost(), "snow");
+    var controller =
+        new JobController(
+            session,
+            new Profile.Policy(Profile.Policy.BreakMode.DENY, 1, 4),
+            pos,
+            new TargetCell.Exact(three),
+            new Planner.Result.Ready(
+                one, List.of(first, second), first.cost().plus(second.cost())));
+    var snapshot = new Host.Snapshot(session, new Host.Epochs(0, 0, 0, 0, 0, 0), null);
+    Host.ActionGateway available =
+        (step, before, policy) ->
+            new Host.Submission.Accepted(new Host.Receipt(UUID.randomUUID(), session));
+    controller.submit(snapshot, one, available);
+    controller.observe((receipt, expected) -> Host.Observation.CONFIRMED);
+    controller.submit(
+        snapshot, two, (step, before, policy) -> new Host.Submission.Deferred("Empty hotbar"));
+    assertEquals(JobController.Status.READY, controller.status());
+    assertEquals(1, controller.confirmedSteps());
+    assertEquals(two, controller.confirmedState());
+    controller.submit(snapshot, two, available);
+    controller.observe((receipt, expected) -> Host.Observation.CONFIRMED);
+    assertEquals(JobController.Status.COMPLETE, controller.status());
+    assertEquals(three, controller.confirmedState());
+  }
+
+  @Test
   void directPlanMustEndAtTheDeclaredTarget() {
     var session = new Host.SessionId();
     var pos = new Position(ResourceId.parse("minecraft:overworld"), 0, 0, 0);

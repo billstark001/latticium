@@ -56,7 +56,7 @@ public final class MinecraftSectionSource implements Host.SectionSnapshotSource 
     world = minecraft.level;
     this.session = session;
     this.epochs = epochs;
-    this.targets = targets;
+    this.targets = targets == null ? null : TargetSources.guarded(targets, session);
     this.selections =
         dependencies.needs(Fact.SELECTION) ? SelectionBounds.copy(selections) : Map.of();
   }

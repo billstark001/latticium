@@ -77,8 +77,28 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
 
   /** Verifies the exact fallback goal before authorizing a destructive first step. */
   public boolean hasPlacementAfterBreak(Position pos, BlockState target) {
-    return breakDeferral(pos) == null
-        && placements(pos, null, true).stream().anyMatch(p -> p.state().equals(target));
+    return predictAfterBreak(pos, target) instanceof Planner.Prediction.Proposals;
+  }
+
+  /** Returns concrete post-break interactions so the caller can also apply material policy. */
+  public Planner.Prediction predictAfterBreak(Position pos, BlockState target) {
+    var reason = breakDeferral(pos);
+    if (reason != null) return new Planner.Prediction.Unknown(reason);
+    var proposals = new ArrayList<Planner.Proposal>();
+    for (var placement : placements(pos, null, true)) {
+      if (!placement.state().equals(target)) continue;
+      proposals.add(
+          new Planner.Proposal(
+              Planner.Action.PLACE,
+              placement.state(),
+              Set.of(pos),
+              new Planner.Cost(1, 1, 0),
+              "latticium:ordinary_block_placement",
+              placement.interaction()));
+    }
+    return proposals.isEmpty()
+        ? new Planner.Prediction.NoLegalPlacement("No verifiable post-break placement")
+        : new Planner.Prediction.Proposals(proposals);
   }
 
   @Override

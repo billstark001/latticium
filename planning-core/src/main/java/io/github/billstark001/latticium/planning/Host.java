@@ -121,12 +121,17 @@ public final class Host {
       }
     }
 
+    /** A proven changed precondition invalidates this attempt; never send its old proposal. */
     record Stale(String reason) implements Submission {
       public Stale {
         Objects.requireNonNull(reason, "reason");
       }
     }
 
+    /**
+     * A temporary obstacle such as an empty hotbar slot. Preserve confirmed progress and recheck
+     * fresh facts before retrying; deferral is not permission to send the proposal unchanged.
+     */
     record Deferred(String reason) implements Submission {
       public Deferred {
         Objects.requireNonNull(reason, "reason");
@@ -153,7 +158,11 @@ public final class Host {
   }
 
   public interface ObservationSource {
-    /** Reports whether the accepted action has produced its expected world state. */
+    /**
+     * Observes the accepted action's submitted result. The expected state must match that proposal;
+     * a different caller-supplied result cannot authorize confirmation. A successful submission or
+     * matching local prediction alone is insufficient evidence.
+     */
     Observation observe(Receipt receipt, BlockState expected);
   }
 }
