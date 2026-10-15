@@ -25,18 +25,21 @@ public final class DedicatedScenario implements Scenario {
       context.await(
           "remote fixture chunk residency",
           Duration.ofSeconds(30),
-          () -> context.onClient(() -> {
-            var mc = Minecraft.getInstance();
-            if (Math.abs(mc.player.getX() - 0.5) > 0.1
-                || Math.abs(mc.player.getZ() - 0.5) > 0.1) return false;
-            for (int x = -1; x <= 0; x++)
-              for (int z = -1; z <= 0; z++)
-                if (!mc.level.getChunkSource().hasChunk(x, z)) return false;
-            return true;
-          }));
+          () ->
+              context.onClient(
+                  () -> {
+                    var mc = Minecraft.getInstance();
+                    if (Math.abs(mc.player.getX() - 0.5) > 0.1
+                        || Math.abs(mc.player.getZ() - 0.5) > 0.1) return false;
+                    for (int x = -1; x <= 0; x++)
+                      for (int z = -1; z <= 0; z++)
+                        if (!mc.level.getChunkSource().hasChunk(x, z)) return false;
+                    return true;
+                  }));
       var filled = server.command("fill -8 80 -8 8 80 8 minecraft:stone");
       server.command("fill -8 81 -8 8 85 8 minecraft:air");
-      context.require(server.block(2, 80, 0, "minecraft:stone"),
+      context.require(
+          server.block(2, 80, 0, "minecraft:stone"),
           "Dedicated fixture support fill failed: " + filled);
       server.command("gamemode survival @a");
       server.command("tp @a 0.5 81 0.5");

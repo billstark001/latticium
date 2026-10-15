@@ -256,10 +256,14 @@ public final class StreamingScenario implements Scenario {
               + " max="
               + samples.getLast());
       System.out.println(
-          "LATTICIUM_AUDIT streamed tile wait samples=" + tileTimes.size()
-              + " nanosP50=" + tileTimes.get(tileTimes.size() / 2)
-              + " nanosP95=" + tileTimes.get(tileTimes.size() * 95 / 100)
-              + " max=" + tileTimes.getLast());
+          "LATTICIUM_AUDIT streamed tile wait samples="
+              + tileTimes.size()
+              + " nanosP50="
+              + tileTimes.get(tileTimes.size() / 2)
+              + " nanosP95="
+              + tileTimes.get(tileTimes.size() * 95 / 100)
+              + " max="
+              + tileTimes.getLast());
     } catch (RuntimeException error) {
       System.out.println(
           "LATTICIUM_AUDIT streaming failure "
@@ -270,9 +274,12 @@ public final class StreamingScenario implements Scenario {
                           + job.blocked()
                           + " player="
                           + Minecraft.getInstance().player.position()
-                          + " slot0=" + Minecraft.getInstance().player.getInventory().getItem(0)
-                          + " paused=" + Minecraft.getInstance().isPaused()
-                          + " screen=" + Minecraft.getInstance().gui.screen()));
+                          + " slot0="
+                          + Minecraft.getInstance().player.getInventory().getItem(0)
+                          + " paused="
+                          + Minecraft.getInstance().isPaused()
+                          + " screen="
+                          + Minecraft.getInstance().gui.screen()));
       System.out.println(
           "LATTICIUM_AUDIT actual received clicks "
               + context.onServer(FixtureNetwork::diagnostics));
