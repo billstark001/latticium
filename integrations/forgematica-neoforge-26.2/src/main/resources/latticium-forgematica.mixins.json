@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "io.github.billstark001.latticium.bridge.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["InitializationHandlerMixin"],
+  "injectors": {"defaultRequire": 1}
+}

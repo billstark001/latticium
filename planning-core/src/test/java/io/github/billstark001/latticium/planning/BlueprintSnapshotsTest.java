@@ -76,23 +76,32 @@ class BlueprintSnapshotsTest {
     var original = view(world, placement, 1, List.of(BOX), List.of());
     var current = new AtomicReference<>(original);
     var snapshots = new BlueprintSnapshots("blueprint", current::get);
-    var session = new Host.SessionId();
-    snapshots.finiteBounds("blueprint", session);
     for (var changed :
         List.of(
             view(new Object(), placement, 1, List.of(BOX), List.of()),
             view(world, new Object(), 1, List.of(BOX), List.of()),
             view(world, placement, 2, List.of(BOX), List.of()),
             view(world, placement, 1, List.of(new Bounds(DIM, 0, 0, 0, 3, 0, 0)), List.of()))) {
+      current.set(original);
+      var session = new Host.SessionId();
+      snapshots.finiteBounds("blueprint", session);
       current.set(changed);
       assertTrue(snapshots.finiteBounds("blueprint", session).isEmpty());
       assertInstanceOf(TargetCell.Unknown.class, snapshots.target(p(0), session));
       assertTrue(snapshots.slice(BOX, session).isEmpty());
+      current.set(original);
+      assertInstanceOf(TargetCell.Unknown.class, snapshots.target(p(0), session));
+      assertTrue(snapshots.finiteBounds("blueprint", session).isEmpty());
     }
+    var session = new Host.SessionId();
+    snapshots.finiteBounds("blueprint", session);
     current.set(null);
     assertInstanceOf(TargetCell.Unknown.class, snapshots.target(p(0), session));
     current.set(original);
-    assertInstanceOf(TargetCell.Exact.class, snapshots.target(p(0), session));
+    assertInstanceOf(TargetCell.Unknown.class, snapshots.target(p(0), session));
+    var fresh = new Host.SessionId();
+    assertEquals(List.of(BOX), snapshots.finiteBounds("blueprint", fresh));
+    assertInstanceOf(TargetCell.Exact.class, snapshots.target(p(0), fresh));
   }
 
   @Test

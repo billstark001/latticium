@@ -8,6 +8,9 @@ version="${modVersion}"
 displayName="Latticium Forgematica Bridge"
 description="Reads active Forgematica placements for Latticium"
 
+[[mixins]]
+config="latticium-forgematica.mixins.json"
+
 [[dependencies.latticium_forgematica_bridge]]
 modId="latticium"
 type="required"

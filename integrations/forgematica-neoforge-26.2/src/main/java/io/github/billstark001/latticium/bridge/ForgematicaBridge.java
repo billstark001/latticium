@@ -46,6 +46,8 @@ public final class ForgematicaBridge implements LatticiumClient.BlueprintProvide
     return snapshots.slice(bounds, session);
   }
 
+  private record Revision(java.util.UUID placement, long modified, boolean dirty) {}
+
   private static BlueprintSnapshots.View currentView() {
     var minecraft = Minecraft.getInstance();
     if (!minecraft.isSameThread() || minecraft.level == null) return null;
@@ -61,7 +63,10 @@ public final class ForgematicaBridge implements LatticiumClient.BlueprintProvide
     return new BlueprintSnapshots.View(
         minecraft.level,
         selected,
-        selected.getHashId(),
+        new Revision(
+            selected.getHashId(),
+            selected.getSchematic().getMetadata().getTimeModified(),
+            selected.getSchematic().getMetadata().wasModifiedSinceSaved()),
         dimension,
         bounds,
         conflicts,

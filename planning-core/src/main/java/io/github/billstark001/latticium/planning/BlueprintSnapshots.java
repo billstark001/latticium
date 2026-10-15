@@ -58,7 +58,12 @@ public final class BlueprintSnapshots implements Host.TargetSource, Host.Selecti
       WeakReference<Object> placement,
       Object revision,
       ResourceId dimension,
-      List<Bounds> bounds) {}
+      List<Bounds> bounds,
+      boolean valid) {
+    Identity invalidate() {
+      return new Identity(world, placement, revision, dimension, bounds, false);
+    }
+  }
 
   private record Validated(View view, String reason) {}
 
@@ -77,17 +82,23 @@ public final class BlueprintSnapshots implements Host.TargetSource, Host.Selecti
     if (!selection.equals(name)) return List.of();
     Objects.requireNonNull(session, "session");
     var view = source.get();
-    if (view == null || view.bounds().isEmpty()) return List.of();
+    if (view == null || view.bounds().isEmpty()) {
+      sessions.computeIfPresent(session, (key, previous) -> previous.invalidate());
+      return List.of();
+    }
     var identity =
         new Identity(
             new WeakReference<>(view.world()),
             new WeakReference<>(view.placement()),
             view.revision(),
             view.dimension(),
-            view.bounds());
+            view.bounds(),
+            true);
     var previous = sessions.putIfAbsent(session, identity);
     // A session is established once; repeated enumeration must not authorize a different placement.
-    return previous == null || same(previous, view) ? view.bounds() : List.of();
+    if (previous == null || same(previous, view)) return view.bounds();
+    sessions.put(session, previous.invalidate());
+    return List.of();
   }
 
   @Override
@@ -108,15 +119,23 @@ public final class BlueprintSnapshots implements Host.TargetSource, Host.Selecti
   private Validated validate(Host.SessionId session) {
     var identity = sessions.get(session);
     if (identity == null) return new Validated(null, "Blueprint session changed");
+    if (!identity.valid())
+      return new Validated(null, "Blueprint session invalidated; start a new job");
     var current = source.get();
-    if (current == null) return new Validated(null, "Active blueprint unavailable");
-    if (!same(identity, current))
+    if (current == null) {
+      sessions.put(session, identity.invalidate());
+      return new Validated(null, "Active blueprint unavailable");
+    }
+    if (!same(identity, current)) {
+      sessions.put(session, identity.invalidate());
       return new Validated(null, "Active placement, world, revision or bounds changed");
+    }
     return new Validated(current, "");
   }
 
   private static boolean same(Identity previous, View current) {
-    return previous.world().get() == current.world()
+    return previous.valid()
+        && previous.world().get() == current.world()
         && previous.placement().get() == current.placement()
         && Objects.equals(previous.revision(), current.revision())
         && previous.dimension().equals(current.dimension())
