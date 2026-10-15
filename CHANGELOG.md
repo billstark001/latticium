@@ -4,6 +4,21 @@ All notable changes to Latticium are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- Data-driven revision events, dependency reads and receipt transitions; dependency-qualified captures/candidates/proposals with bounded evidence and explicit short-lived external inputs.
+- Per-profile JSON and four-language execution settings for version granularity, frozen/live intent, inventory consistency, widened support reads, settling/repeated sand work and finite planning/candidate limits.
+- Native predictor budget/error, revision, real dimension travel, registered stateful/throwing mod fixtures, dedicated-server and survival streaming acceptance scenarios, with separate capture/allocation/frame measurements.
+
+### Fixed
+
+- Wake reachable parked work across section boundaries immediately after movement, avoiding long distant-queue waits at section edges.
+- Reject target and click positions outside the current dimension's build height before sending an interaction; include boundary and actual server packet-coordinate checks in native acceptance.
+- Fresh submission metadata cannot launder an old plan. Each confirmed qualified step replans its remaining work; post-break predictor errors cannot authorize destruction.
+- Candidate capacity uses rediscovery/backpressure and protected partial progress. One-tick retries rotate fairly instead of starving other ready candidates.
+- Retry-cache eviction promotes a bounded shared work floor so round-robin complex candidates can reach the configured cap instead of endlessly restarting at the initial budget.
+- Stopped-on-edit tasks expose their cancelled state in the controls.
+
 ## [0.0.3] - 2026-10-16
 
 ### Fixed

@@ -16,6 +16,10 @@ Open settings from the controls screen or `/latticium settings`. On Fabric, inst
 
 ## A finite selection and an immediate job
 
+For per-profile change tracking, frozen intent, moving-block tasks and finite planning limits,
+see [execution options](execution-options.md). They are available from the selected profile's
+**Execution options** button as well as its JSON definition.
+
 Stand at one corner and run `/latticium pos1`, then stand at the opposite corner and run `/latticium pos2`. Each command prints the recorded block coordinates, such as `pos1 set: (10, 64, -5)`. Save the inclusive box with `/latticium selection save build`. The selection is stored for the current server and dimension. A profile that names an unavailable or empty selection fails to start with an explicit error.
 
 The commands `/latticium fill minecraft:stone`, `/latticium replace minecraft:dirt minecraft:stone`, and `/latticium clear` use `build`. Fill selects normal, cave and void air, replace selects the named source block, and clear selects the whole box. Replacement freezes a verifiable target before breaking. The current post-break proof supports plain property-free blocks with a reachable plain full-block support. Fluid-containing blocks, directly coupled multi-block structures, missing supports and unverified property-sensitive replacements defer before removing the source. Clear also defers fluid-containing or directly coupled multi-block structures. Use `/latticium status`, `pause`, `resume`, and `cancel` to inspect and control the job. `/latticium refresh` immediately queues a full rescan of the current job, including a job in manual refresh mode. Scanning proceeds within the normal per-tick budget; the command does not synchronously scan the whole selection. Pausing prevents the next submission; an action already sent to the server still has to settle. An action budget limits submissions in one activation, and reaching it ends that activation even if candidates remain. An explicit refresh after exhaustion starts a new action budget.

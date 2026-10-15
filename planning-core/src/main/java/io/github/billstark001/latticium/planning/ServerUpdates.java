@@ -16,6 +16,7 @@ public final class ServerUpdates {
 
   private final int capacity;
   private final Map<Position, Update> updates = new LinkedHashMap<>(16, 0.75f, true);
+  private final Map<Position, java.util.ArrayDeque<Update>> history = new LinkedHashMap<>();
   private long sequence;
 
   public ServerUpdates(int capacity) {
@@ -27,8 +28,16 @@ public final class ServerUpdates {
   public void record(Position position, BlockState state) {
     Objects.requireNonNull(position, "position");
     Objects.requireNonNull(state, "state");
-    updates.put(position, new Update(++sequence, state));
-    if (updates.size() > capacity) updates.remove(updates.keySet().iterator().next());
+    var update = new Update(++sequence, state);
+    updates.put(position, update);
+    var recent = history.computeIfAbsent(position, ignored -> new java.util.ArrayDeque<>());
+    recent.addLast(update);
+    if (recent.size() > 8) recent.removeFirst();
+    if (updates.size() > capacity) {
+      var oldest = updates.keySet().iterator().next();
+      updates.remove(oldest);
+      history.remove(oldest);
+    }
   }
 
   /** Null means forgotten or never observed; it cannot be used as server confirmation. */
@@ -41,9 +50,23 @@ public final class ServerUpdates {
     return update == null ? 0 : update.revision();
   }
 
+  /** Explicit transient-operation mode still needs a retained authoritative expected payload. */
+  public Update expectedAfter(Position position, BlockState expected, long revision) {
+    var recent = history.get(position);
+    if (recent == null) return null;
+    var iterator = recent.descendingIterator();
+    while (iterator.hasNext()) {
+      var update = iterator.next();
+      if (update.revision() <= revision) return null;
+      if (update.state().equals(expected)) return update;
+    }
+    return null;
+  }
+
   /** Clears the history at a world/session boundary; old receipts must already be discarded. */
   public void clear() {
     updates.clear();
+    history.clear();
     sequence = 0;
   }
 }

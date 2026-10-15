@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"latticiumaudit","version":"1.0.0","name":"Latticium acceptance fixture","environment":"*","entrypoints":{"main":["latticiumaudit.FabricFixture"]},"mixins":["latticium-audit.mixins.json"]}

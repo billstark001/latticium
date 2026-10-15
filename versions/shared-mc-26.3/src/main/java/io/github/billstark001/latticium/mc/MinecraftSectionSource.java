@@ -5,10 +5,13 @@ import io.github.billstark001.latticium.dsl.FactDependencies.Fact;
 import io.github.billstark001.latticium.dsl.Model.*;
 import io.github.billstark001.latticium.planning.CaptureColumns;
 import io.github.billstark001.latticium.planning.CellWindow;
+import io.github.billstark001.latticium.planning.Execution;
 import io.github.billstark001.latticium.planning.FactWindow;
 import io.github.billstark001.latticium.planning.Host;
+import io.github.billstark001.latticium.planning.Revisions;
 import io.github.billstark001.latticium.planning.SectionScanner.Bounds;
 import io.github.billstark001.latticium.planning.SelectionBounds;
+import io.github.billstark001.latticium.planning.SpatialReads;
 import io.github.billstark001.latticium.planning.TargetSlice;
 import io.github.billstark001.latticium.planning.TargetSources;
 import java.util.HashMap;
@@ -32,6 +35,12 @@ public final class MinecraftSectionSource implements Host.SectionSnapshotSource 
   private final Host.Epochs epochs;
   private final Host.TargetSource targets;
   private final Map<String, List<Bounds>> selections;
+  private Execution.Granularity granularity = Execution.Granularity.CELL;
+
+  MinecraftSectionSource granularity(Execution.Granularity value) {
+    granularity = java.util.Objects.requireNonNull(value);
+    return this;
+  }
 
   public MinecraftSectionSource(
       Minecraft minecraft,
@@ -121,6 +130,9 @@ public final class MinecraftSectionSource implements Host.SectionSnapshotSource 
     var dimension = MinecraftStateCodec.id(level.dimension().identifier());
     if (!dimension.equals(requestedDimension))
       return new Host.Capture.Deferred("Dimension changed");
+    if (ClientRegistryState.epochs().registry() != epochs.registry())
+      return new Host.Capture.Deferred("Registry binding changed");
+    var revisionInputs = ClientRevisions.snapshotInputs(session);
     // Missing world columns are Unknown per cell; coordinate/selection branches can still
     // decide a predicate in an unloaded chunk without inventing world facts.
     var evaluated =
@@ -241,7 +253,18 @@ public final class MinecraftSectionSource implements Host.SectionSnapshotSource 
     var captured =
         new FactWindow(
             session, window, cells, targetSlice.orElse(null), selections, player, inventory);
-    return new Host.Capture.Ready(new Host.Snapshot(session, epochs, captured));
+    boolean versioned =
+        dependencies.facts().stream().allMatch(fact -> fact == Fact.STATE || fact == Fact.FLUID);
+    var inputs =
+        revisionInputs.withSpatial(
+            new SpatialReads(
+                evaluated,
+                dependencies,
+                halo,
+                granularity,
+                versioned ? Revisions.Reliability.VERSIONED : Revisions.Reliability.SHORT_LIVED));
+    return new Host.Capture.Ready(
+        new Host.Snapshot(session, ClientRegistryState.epochs(), captured, inputs));
   }
 
   private static WorldCell stateCell(net.minecraft.world.level.block.state.BlockState state) {

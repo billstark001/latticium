@@ -12,6 +12,7 @@ public final class LatticiumScenario implements Scenario {
     context.inspect();
     BridgeConcurrencyScenario.verify(context);
     context.call("world.create", Map.of("flat", true, "seed", "20261015", "timeoutMillis", 150000));
+    NativeWorld.quiet(context);
     context.call("profile.start");
     var probe = context.onClient(() -> new AuditProbe(context.outputDirectory()));
     context.await(
@@ -28,6 +29,14 @@ public final class LatticiumScenario implements Scenario {
     context.screenshot("latticium-gameplay");
     ActivationScenario.verifyWorld(context);
     ResidencyScenario.verifyWorld(context);
+    RevisionScenario.verifyWorld(context);
+    SourceEditsScenario.verifyWorld(context);
+    PlanningScenario.verifyWorld(context);
+    ModdedScenario.verifyWorld(context);
+    DynamicScenario.verifyWorld(context);
+    TravelScenario.verifyWorld(context);
+    PerformanceScenario.verifyWorld(context);
+    StreamingScenario.verifyWorld(context);
     UiScenario.verifyWorld(context);
     context.call("world.disconnect");
   }

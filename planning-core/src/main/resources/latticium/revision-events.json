@@ -1,0 +1,14 @@
+[
+  {"id":"world_switch","scope":"GLOBAL","domains":["WORLD","RESIDENCY"],"effect":"END_SESSION"},
+  {"id":"registry_reload","scope":"GLOBAL","domains":["REGISTRY","RULES"],"effect":"REBIND"},
+  {"id":"block_update","scope":"CELL","domains":["STATE","FLUID","SOLID"],"effect":"REPLAN"},
+  {"id":"chunk_load","scope":"SECTION","domains":["STATE","FLUID","SOLID","LIGHT","BIOME","RESIDENCY"],"effect":"REPLAN"},
+  {"id":"chunk_unload","scope":"SECTION","domains":["STATE","FLUID","SOLID","LIGHT","BIOME","RESIDENCY"],"effect":"REPLAN"},
+  {"id":"light_update","scope":"SECTION","domains":["LIGHT"],"effect":"REPLAN"},
+  {"id":"biome_update","scope":"SECTION","domains":["BIOME"],"effect":"REPLAN"},
+  {"id":"selection_edit","scope":"NAMED","domains":["SELECTION"],"effect":"RECHECK_INTENT"},
+  {"id":"target_edit","scope":"NAMED","domains":["TARGET"],"effect":"RECHECK_INTENT"},
+  {"id":"inventory_edit","scope":"SLOT","domains":["INVENTORY"],"effect":"REPLAN"},
+  {"id":"player_context","scope":"GLOBAL","domains":["PLAYER"],"effect":"REPLAN"},
+  {"id":"rule_edit","scope":"NAMED","domains":["RULES"],"effect":"RECHECK_INTENT"}
+]

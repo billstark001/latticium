@@ -39,4 +39,37 @@ final class BlueprintProviders {
   synchronized boolean hasBlueprint() {
     return !blueprints.isEmpty();
   }
+
+  Map<String, Boolean> capabilities() {
+    return Map.of(
+        "finite_scanning",
+        true,
+        "ordinary_placement",
+        true,
+        "normal_break",
+        true,
+        "blueprint_provider",
+        hasBlueprint());
+  }
+
+  Map<String, java.util.List<io.github.billstark001.latticium.planning.SectionScanner.Bounds>>
+      jobSelections(
+          io.github.billstark001.latticium.planning.Profile profile,
+          Host.SessionId session,
+          Map<
+                  String,
+                  java.util.List<io.github.billstark001.latticium.planning.SectionScanner.Bounds>>
+              saved) {
+    var result = new HashMap<>(saved);
+    if (profile.target()
+        instanceof io.github.billstark001.latticium.planning.Profile.Source external) {
+      var provider = blueprint(external.id());
+      if (provider != null) {
+        var bounds = provider.finiteBounds("active_blueprint", session);
+        if (bounds.isEmpty()) throw new IllegalStateException("No active blueprint selection");
+        result.put("active_blueprint", bounds);
+      }
+    }
+    return result;
+  }
 }

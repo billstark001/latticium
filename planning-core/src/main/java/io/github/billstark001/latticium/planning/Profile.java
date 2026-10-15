@@ -16,9 +16,22 @@ public record Profile(
     String scope,
     Select select,
     Target target,
-    Policy policy) {
+    Policy policy,
+    Execution execution) {
   /** JSON profile schema understood by this offline core. */
   public static final int SCHEMA_VERSION = 1;
+
+  public Profile(
+      int schema,
+      ResourceId id,
+      List<ResourceId> uses,
+      Activation activation,
+      String scope,
+      Select select,
+      Target target,
+      Policy policy) {
+    this(schema, id, uses, activation, scope, select, target, policy, Execution.DEFAULT);
+  }
 
   public Profile {
     if (schema != SCHEMA_VERSION)
@@ -29,6 +42,7 @@ public record Profile(
     Objects.requireNonNull(select, "select");
     Objects.requireNonNull(target, "target");
     Objects.requireNonNull(policy, "policy");
+    Objects.requireNonNull(execution, "execution");
   }
 
   /** Optional automatic trigger; a null activation on {@link Profile} means manual start. */
@@ -134,14 +148,19 @@ public record Profile(
       var dependencies = scanDependencies().union(FactDependencies.of(FactDependencies.Fact.STATE));
       if (items != null) dependencies = dependencies.union(items.dependencies());
       if (states != null) dependencies = dependencies.union(states.dependencies());
-      return dependencies;
+      return profile.execution().dependencies().widen(dependencies);
     }
 
     /** Largest local window needed by any planning-time expression. */
     public int planningRadius() {
-      return Math.max(
-          Math.max(scope.radius(), select.radius()),
-          Math.max(items == null ? 0 : items.radius(), states == null ? 0 : states.radius()));
+      return profile
+          .execution()
+          .dependencies()
+          .requiredRadius(
+              Math.max(
+                  Math.max(scope.radius(), select.radius()),
+                  Math.max(
+                      items == null ? 0 : items.radius(), states == null ? 0 : states.radius())));
     }
 
     public Bound {

@@ -6,6 +6,7 @@ import io.github.billstark001.latticium.planning.ActionConfirmation;
 import io.github.billstark001.latticium.planning.Host;
 import io.github.billstark001.latticium.planning.Planner;
 import io.github.billstark001.latticium.planning.Profile;
+import io.github.billstark001.latticium.planning.Revisions;
 import io.github.billstark001.latticium.planning.SectionScanner.Bounds;
 import io.github.billstark001.latticium.planning.SelectionBounds;
 import io.github.billstark001.latticium.planning.TargetSources;
@@ -34,17 +35,25 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
       Planner.Action action,
       Planner.Interaction interaction,
       TargetCell target,
+      Revisions.Stamp inputs,
       ActionConfirmation confirmation) {}
 
   private final Minecraft minecraft;
   private final ClientLevel world;
   private final Host.SessionId session;
   private final Supplier<Host.Epochs> epochs;
+  private final long registryBinding;
   private final Host.TargetSource targets;
   private final Compiler.Bound allowedItems;
   private final Map<String, List<Bounds>> selections;
   private final Map<UUID, Pending> pending = new HashMap<>();
   private boolean cancelRequested;
+  private java.util.function.BooleanSupplier predictionValid = () -> true;
+  private boolean transientConfirmation;
+
+  void transientConfirmation(boolean enabled) {
+    transientConfirmation = enabled;
+  }
 
   public MinecraftActionGateway(
       Minecraft minecraft,
@@ -57,9 +66,14 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     world = minecraft.level;
     this.session = session;
     this.epochs = epochs;
+    registryBinding = epochs.get().registry();
     this.targets = targets == null ? null : TargetSources.guarded(targets, session);
     this.allowedItems = allowedItems;
     this.selections = SelectionBounds.copy(selections);
+  }
+
+  void predictionValidity(java.util.function.BooleanSupplier check) {
+    predictionValid = java.util.Objects.requireNonNull(check);
   }
 
   @Override
@@ -73,18 +87,30 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     if (level == null || player == null || mode == null)
       return new Host.Submission.Deferred("No world or player");
     if (level != world) return new Host.Submission.Stale("Client world changed");
-    if (!session.equals(before.session()) || !before.epochs().equals(epochs.get()))
+    if (registryBinding != epochs.get().registry())
+      return new Host.Submission.Stale("Registry binding changed");
+    if (!session.equals(before.session()) || before.epochs().registry() != epochs.get().registry())
       return new Host.Submission.Stale("Session or facts changed");
+    if (before.inputs() != null
+        && !ClientRevisions.LEDGER.valid(before.inputs(), session, level.getGameTime()))
+      return new Host.Submission.Deferred("Prediction revision changed; replan");
     var pos = before.position();
     if (!MinecraftStateCodec.id(level.dimension().identifier()).equals(pos.dimension()))
       return new Host.Submission.Stale("Dimension changed");
     if (!level.getChunkSource().hasChunk(pos.x() >> 4, pos.z() >> 4))
       return new Host.Submission.Deferred("Chunk unloaded");
     var blockPos = new BlockPos(pos.x(), pos.y(), pos.z());
+    if (level.isOutsideBuildHeight(blockPos))
+      return new Host.Submission.Rejected("Target outside dimension build height");
     if (!MinecraftStateCodec.state(level.getBlockState(blockPos)).equals(before.expectedCurrent()))
       return new Host.Submission.Stale("World state changed");
-    if (targets != null && !targets.target(pos, session).equals(before.expectedTarget()))
-      return new Host.Submission.Stale("Target changed");
+    if (targets != null) {
+      var target = targets.target(pos, session);
+      if (target instanceof TargetCell.Unknown)
+        return new Host.Submission.Deferred("Target facts unavailable");
+      if (!target.equals(before.expectedTarget()))
+        return new Host.Submission.Stale("Target changed");
+    }
     if (!step.affectsOnly(pos)) return new Host.Submission.Rejected("Undeclared effects");
     if (step.action() == Planner.Action.BREAK
         && policy.breakMode() == Profile.Policy.BreakMode.DENY)
@@ -148,6 +174,8 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
                   ? blockPos
                   : blockPos.relative(face.getOpposite())
               : new BlockPos(clicked.x(), clicked.y(), clicked.z());
+      if (level.isOutsideBuildHeight(clickedPos))
+        return new Host.Submission.Rejected("Clicked position outside dimension build height");
       if (!player.isWithinBlockInteractionRange(clickedPos, 0))
         return new Host.Submission.Deferred("Clicked block outside interaction reach");
       player.getInventory().setSelectedSlot(slot);
@@ -157,6 +185,8 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
               face,
               clickedPos,
               false);
+      if (!predictionValid.getAsBoolean())
+        return new Host.Submission.Deferred("Prediction inputs changed; replan");
       mode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
 
     } else if (step.action() == Planner.Action.BREAK) {
@@ -166,6 +196,8 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
       if (!step.result().equals(afterBreak))
         return new Host.Submission.Stale("Break result changed");
       var face = interaction == null ? Direction.UP : Direction.valueOf(interaction.face().name());
+      if (!predictionValid.getAsBoolean())
+        return new Host.Submission.Deferred("Prediction inputs changed; replan");
       if (!mode.startDestroyBlock(blockPos, face))
         return new Host.Submission.Deferred("Could not start breaking");
     } else return new Host.Submission.Rejected("No native executor for " + step.action());
@@ -177,6 +209,7 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
             step.action(),
             interaction,
             before.expectedTarget(),
+            before.inputs(),
             new ActionConfirmation(
                 before.expectedCurrent(), step.result(), level.getGameTime(), serverRevision)));
     return new Host.Submission.Accepted(receipt);
@@ -192,6 +225,19 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
     if (level == null || minecraft.gameMode == null)
       return complete(receipt, Host.Observation.CONTRADICTED);
     if (level != world) return complete(receipt, Host.Observation.CONTRADICTED);
+    if (action.inputs() != null) {
+      var intent =
+          action
+              .inputs()
+              .select(
+                  key ->
+                      switch (key.domain()) {
+                        case WORLD, REGISTRY, SELECTION, RULES -> true;
+                        default -> false;
+                      });
+      if (!ClientRevisions.LEDGER.valid(intent, session, level.getGameTime()))
+        return complete(receipt, Host.Observation.CONTRADICTED);
+    }
     var pos = action.position();
     if (!action.confirmation().expected().equals(expected)
         || targets != null && !targets.target(pos, session).equals(action.target()))
@@ -208,6 +254,17 @@ public final class MinecraftActionGateway implements Host.ActionGateway, Host.Ob
                 LatticiumClient.get().serverUpdate(pos),
                 level.getGameTime(),
                 TIMEOUT_TICKS);
+    if (transientConfirmation)
+      observation =
+          action
+              .confirmation()
+              .observeTransition(
+                  loaded ? MinecraftStateCodec.state(level.getBlockState(blockPos)) : null,
+                  LatticiumClient.get().serverUpdate(pos),
+                  LatticiumClient.get()
+                      .expectedUpdate(pos, expected, action.confirmation().serverRevision()),
+                  level.getGameTime(),
+                  TIMEOUT_TICKS);
     if (observation != Host.Observation.STILL_PENDING) return complete(receipt, observation);
     if (!loaded) return Host.Observation.STILL_PENDING;
     if (action.action() == Planner.Action.BREAK && !cancelRequested) {

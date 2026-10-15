@@ -46,6 +46,11 @@ public final class ForgematicaBridge implements LatticiumClient.BlueprintProvide
     return snapshots.slice(bounds, session);
   }
 
+  @Override
+  public Optional<Host.SourceRevision> revision(Host.SessionId session) {
+    return snapshots.revision(session);
+  }
+
   private record Revision(java.util.UUID placement, long modified, boolean dirty) {}
 
   private static BlueprintSnapshots.View currentView() {

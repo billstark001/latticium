@@ -20,6 +20,7 @@ public record ClientDiagnostics(int totalPositions, int totalGroups, List<Group>
     MATERIAL,
     DATA,
     BUDGET,
+    CAPACITY,
     POLICY,
     CONFIRMATION,
     CHANGED,
@@ -30,6 +31,7 @@ public record ClientDiagnostics(int totalPositions, int totalGroups, List<Group>
       String text = reason.toLowerCase(Locale.ROOT);
       if (text.contains("outside interaction reach")) return REACH;
       if (text.contains("budget") || text.contains("remaining actions")) return BUDGET;
+      if (text.contains("candidate capacity")) return CAPACITY;
       if (text.contains("breaking denied")) return POLICY;
       if (text.equals("timed_out") || text.equals("contradicted")) return CONFIRMATION;
       if (text.contains("changed") || text.contains("session mismatch")) return CHANGED;

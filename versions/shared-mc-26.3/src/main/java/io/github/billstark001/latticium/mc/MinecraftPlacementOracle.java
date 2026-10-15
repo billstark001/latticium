@@ -29,7 +29,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /** Predicts ordinary hotbar block placement without changing the live world. */
-public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialSelector.Oracle {
+public class MinecraftPlacementOracle implements Planner.Oracle, MaterialSelector.Oracle {
   private final Minecraft minecraft;
   private final ClientLevel world;
 
@@ -47,6 +47,7 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
       return "Dimension changed";
     if (!level.getChunkSource().hasChunk(pos.x() >> 4, pos.z() >> 4)) return "Chunk unloaded";
     var at = new BlockPos(pos.x(), pos.y(), pos.z());
+    if (level.isOutsideBuildHeight(at)) return "Target outside dimension build height";
     if (!level.getFluidState(at).isEmpty())
       return "Breaking fluid-containing blocks is not modelled";
     var state = level.getBlockState(at);
@@ -123,6 +124,8 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
     if (!minecraft.isSameThread()) return new Planner.Prediction.Unknown("Not on client thread");
     if (minecraft.level == null || minecraft.level != world)
       return new Planner.Prediction.Unknown("Client world changed");
+    if (minecraft.level.isOutsideBuildHeight(pos.y()))
+      return new Planner.Prediction.Unknown("Target outside dimension build height");
     var proposals = new ArrayList<Planner.Proposal>();
     var repeater = repeaterClick(pos, current);
     if (repeater != null) proposals.add(repeater);
@@ -243,6 +246,7 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
         || !level.getChunkSource().hasChunk(pos.x() >> 4, pos.z() >> 4)) return List.of();
     var target = new BlockPos(pos.x(), pos.y(), pos.z());
     var found = new ArrayList<Placement>();
+    if (level.isOutsideBuildHeight(target)) return found;
     var inventory = player.getInventory();
     for (int slot = 0; slot < Math.min(9, inventory.getContainerSize()); slot++) {
       var stack = inventory.getItem(slot);
@@ -254,6 +258,7 @@ public final class MinecraftPlacementOracle implements Planner.Oracle, MaterialS
               || !item.getBlock().getStateDefinition().getProperties().isEmpty())) continue;
       for (var direction : Direction.values()) {
         var support = target.relative(direction);
+        if (level.isOutsideBuildHeight(support)) continue;
         if (!level.getChunkSource().hasChunk(support.getX() >> 4, support.getZ() >> 4)) continue;
         if (afterBreak) {
           var supportState = level.getBlockState(support);

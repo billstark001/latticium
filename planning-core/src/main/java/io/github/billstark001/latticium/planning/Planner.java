@@ -134,7 +134,16 @@ public final class Planner {
   /** Search result; Ready still requires gateway submission and world observation. */
   public sealed interface Result
       permits Result.Ready, Result.Complete, Result.NoPlan, Result.Deferred {
-    record Ready(BlockState initial, List<Proposal> steps, Cost cost) implements Result {
+    record Ready(BlockState initial, List<Proposal> steps, Cost cost, Revisions.Stamp inputs)
+        implements Result {
+      public Ready(BlockState initial, List<Proposal> steps, Cost cost) {
+        this(initial, steps, cost, null);
+      }
+
+      public Ready withInputs(Revisions.Stamp stamp) {
+        return new Ready(initial, steps, cost, Objects.requireNonNull(stamp));
+      }
+
       public Ready {
         Objects.requireNonNull(initial, "initial");
         steps = List.copyOf(steps);
@@ -263,7 +272,7 @@ public final class Planner {
           continue;
         }
         if (prediction instanceof Prediction.Unsupported unsupported) {
-          last = unsupported.reason();
+          if (unknownReason == null) unknownReason = unsupported.reason();
           continue;
         }
         if (prediction instanceof Prediction.NoLegalPlacement unavailable) {

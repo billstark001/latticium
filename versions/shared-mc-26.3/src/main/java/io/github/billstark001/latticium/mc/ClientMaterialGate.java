@@ -28,10 +28,16 @@ final class ClientMaterialGate {
   }
 
   boolean hasPlacementAfterBreak(Position pos, BlockState target, Facts facts) {
+    return placementAfterBreak(pos, target, facts).isPresent();
+  }
+
+  java.util.Optional<Planner.Proposal> placementAfterBreak(
+      Position pos, BlockState target, Facts facts) {
     var afterBreak = StateOverlay.at(facts, pos, AIR, new TargetCell.Exact(target));
     return filter(oracle.predictAfterBreak(pos, target), afterBreak)
             instanceof Planner.Prediction.Proposals proposals
-        && !proposals.steps().isEmpty();
+        ? proposals.steps().stream().findFirst()
+        : java.util.Optional.empty();
   }
 
   private Planner.Prediction filter(Planner.Prediction predicted, Facts facts) {
@@ -56,6 +62,6 @@ final class ClientMaterialGate {
     if (!allowed.isEmpty()) return new Planner.Prediction.Proposals(allowed);
     return unknown
         ? new Planner.Prediction.Unknown("Allowed material facts unavailable")
-        : new Planner.Prediction.Unsupported("No allowed item predicts the exact state");
+        : new Planner.Prediction.NoLegalPlacement("No allowed item predicts the exact state");
   }
 }

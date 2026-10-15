@@ -137,7 +137,7 @@ final class BlueprintAudit {
         new Host.SectionCaptureKey(
             blueprintSession,
             new SectionScanner.SectionKey(p.dimension(), p.x() >> 4, p.y() >> 4, p.z() >> 4));
-    var epochs = new Host.Epochs(0, 0, 0, 0, 0, 0);
+    var epochs = ClientRegistryState.epochs();
     var batch =
         new MinecraftSectionSource(
             minecraft,

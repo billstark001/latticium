@@ -31,7 +31,18 @@ public final class ProfileReader {
     try {
       JsonNode root = StrictJson.parse(json);
       ObjectNode o = obj(root, "");
-      keys(o, "", "schema", "id", "use", "activation", "scope", "select", "target", "policy");
+      keys(
+          o,
+          "",
+          "schema",
+          "id",
+          "use",
+          "activation",
+          "scope",
+          "select",
+          "target",
+          "policy",
+          "execution");
       var schema = o.get("schema");
       if (!isInt(schema) || schema.intValue() != Profile.SCHEMA_VERSION)
         throw new Error("/schema", "Expected schema " + Profile.SCHEMA_VERSION);
@@ -145,7 +156,15 @@ public final class ProfileReader {
                   Profile.Policy.RefreshMode.class,
                   "/policy/refresh"));
       return new Profile(
-          Profile.SCHEMA_VERSION, id, List.copyOf(uses), activation, scope, select, target, policy);
+          Profile.SCHEMA_VERSION,
+          id,
+          List.copyOf(uses),
+          activation,
+          scope,
+          select,
+          target,
+          policy,
+          ExecutionReader.read(o.get("execution")));
     } catch (IOException ex) {
       throw new Error("", ex.getMessage());
     }

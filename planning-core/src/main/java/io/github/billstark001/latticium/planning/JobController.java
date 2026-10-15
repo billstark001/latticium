@@ -25,6 +25,7 @@ public final class JobController {
   private final BlockState initial;
   private final List<Planner.Proposal> steps;
   private final boolean partial;
+  private final Revisions.Stamp inputs;
   private int next;
   private Host.Receipt receipt;
   private Status status = Status.READY;
@@ -56,6 +57,9 @@ public final class JobController {
     this.initial = Objects.requireNonNull(plan.initial());
     this.steps = plan.steps();
     this.partial = partial;
+    inputs = plan.inputs();
+    if (inputs != null && !inputs.session().equals(session))
+      throw new IllegalArgumentException("Plan revision session mismatch");
     if (steps.isEmpty()) throw new IllegalArgumentException("Empty action plan");
     if (reaches(initial, target))
       throw new IllegalArgumentException("Action plan starts at its target");
@@ -110,7 +114,7 @@ public final class JobController {
   /** Clears a pending pause and permits the next submission after observation. */
   public void resume() {
     pauseRequested = false;
-    if (status == Status.PAUSED) status = Status.READY;
+    if (status == Status.PAUSED) status = inputs != null && next > 0 ? Status.REPLAN : Status.READY;
   }
 
   /** Cancels future submissions while allowing an accepted action to settle. */
@@ -134,6 +138,10 @@ public final class JobController {
   /** Submits the next step for the original session after rechecking the prior result. */
   public void submit(Host.Snapshot fresh, BlockState current, Host.ActionGateway gateway) {
     if (status != Status.READY) return;
+    if (inputs != null && next > 0) {
+      status = Status.REPLAN;
+      return;
+    }
     if (!session.equals(fresh.session())) {
       status = Status.BLOCKED;
       reason = "Session changed";
@@ -164,7 +172,13 @@ public final class JobController {
     var submission =
         gateway.submit(
             step,
-            new Host.Preconditions(session, fresh.epochs(), position, current, target),
+            new Host.Preconditions(
+                session,
+                fresh.epochs(),
+                position,
+                current,
+                target,
+                next == 0 && inputs != null ? inputs : fresh.inputs()),
             policy);
     if (submission instanceof Host.Submission.Accepted accepted) {
       if (!session.equals(accepted.receipt().session())) {
@@ -188,23 +202,18 @@ public final class JobController {
   public void observe(Host.ObservationSource source) {
     if (status != Status.WAITING) return;
     var observation = source.observe(receipt, steps.get(next).result());
-    switch (observation) {
-      case CONFIRMED -> {
-        receipt = null;
-        next++;
-        status =
-            cancelRequested
-                ? Status.CANCELLED
-                : next == steps.size()
-                    ? partial ? Status.REPLAN : Status.COMPLETE
-                    : pauseRequested ? Status.PAUSED : Status.READY;
-      }
-      case STILL_PENDING -> {}
-      case CONTRADICTED, TIMED_OUT -> {
-        receipt = null;
-        status = cancelRequested ? Status.CANCELLED : Status.BLOCKED;
-        reason = observation.name();
-      }
-    }
+    var transition =
+        ActionTransitions.resolve(
+            observation,
+            cancelRequested,
+            next + 1 == steps.size(),
+            partial,
+            pauseRequested,
+            inputs != null && next + 1 < steps.size());
+    if (transition.advance()) next++;
+    status = transition.next();
+    if (status != Status.WAITING) receipt = null;
+    if (observation == Host.Observation.CONTRADICTED || observation == Host.Observation.TIMED_OUT)
+      reason = observation.name();
   }
 }

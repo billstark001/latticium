@@ -87,6 +87,34 @@ class RefreshCoordinatorTest {
   }
 
   @Test
+  void movingNearParkedWorkAcceleratesDiscoveryWithoutReanchoringAManualScope() {
+    var refresh = coordinator("box(0,0,0,48,0,0)", "all()", "manual", at(0));
+    while (refresh.scannedSections() < refresh.sectionCount())
+      assertNotNull(refresh.nextSection(1));
+    refresh.park(at(32));
+    assertNull(refresh.nextSection(1));
+    refresh.playerMoved(at(33));
+    assertEquals(2, refresh.nextSection(2).key().x());
+    var relative = coordinator("sphere(player,2)", "all()", "manual", at(0));
+    relative.playerMoved(at(48));
+    relative.requestFullRefresh(at(48));
+    assertTrue(relative.sections().stream().anyMatch(section -> section.key().x() == 3));
+  }
+
+  @Test
+  void reachableParkedWorkAcrossASectionBoundaryPrecedesDistantRetry() {
+    var refresh = coordinator("box(0,0,0,64,0,0)", "all()", "manual", at(0));
+    while (refresh.scannedSections() < refresh.sectionCount())
+      assertNotNull(refresh.nextSection(1));
+    refresh.park(at(64));
+    refresh.park(at(16));
+    refresh.playerMoved(at(15), 6.5);
+    assertEquals(1, refresh.nextSection(20).key().x());
+    assertEquals(4, refresh.nextSection(20).key().x());
+    assertNull(refresh.nextSection(21));
+  }
+
+  @Test
   void playerMovementQueuesOnlyChangedSphereCells() {
     var refresh = coordinator("box(0,0,0,48,0,0)", "sphere(player,2)", "continuous", at(0));
     refresh.playerMoved(at(16));

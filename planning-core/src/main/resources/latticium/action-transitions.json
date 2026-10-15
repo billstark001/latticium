@@ -1,0 +1,13 @@
+[
+  {"observation":"CONFIRMED","when":"CANCEL_REQUESTED","next":"CANCELLED","advance":true},
+  {"observation":"CONFIRMED","when":"PARTIAL_FINISHED","next":"REPLAN","advance":true},
+  {"observation":"CONFIRMED","when":"FINISHED","next":"COMPLETE","advance":true},
+  {"observation":"CONFIRMED","when":"PAUSE_REQUESTED","next":"PAUSED","advance":true},
+  {"observation":"CONFIRMED","when":"QUALIFIED_REMAINDER","next":"REPLAN","advance":true},
+  {"observation":"CONFIRMED","when":"ALWAYS","next":"READY","advance":true},
+  {"observation":"STILL_PENDING","when":"ALWAYS","next":"WAITING","advance":false},
+  {"observation":"CONTRADICTED","when":"CANCEL_REQUESTED","next":"CANCELLED","advance":false},
+  {"observation":"CONTRADICTED","when":"ALWAYS","next":"BLOCKED","advance":false},
+  {"observation":"TIMED_OUT","when":"CANCEL_REQUESTED","next":"CANCELLED","advance":false},
+  {"observation":"TIMED_OUT","when":"ALWAYS","next":"BLOCKED","advance":false}
+]

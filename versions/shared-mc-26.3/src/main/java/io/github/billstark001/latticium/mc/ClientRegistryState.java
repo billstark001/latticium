@@ -9,11 +9,9 @@ public final class ClientRegistryState {
 
   private ClientRegistryState() {}
 
-  /**
-   * Only the registry revision is currently tracked; other fact epochs remain conservative zero.
-   */
+  /** Coarse source revisions for diagnostics. Dependency-qualified proofs govern native reuse. */
   public static Host.Epochs epochs() {
-    return new Host.Epochs(registryRevision, 0, 0, 0, 0, 0);
+    return ClientRevisions.epochs(registryRevision);
   }
 
   /** Called on the client thread after vanilla has installed the updated tags. */
@@ -22,6 +20,11 @@ public final class ClientRegistryState {
     if (!minecraft.isSameThread())
       throw new IllegalStateException("Registry update on client thread");
     registryRevision++;
+    ClientRevisions.LEDGER.sample(
+        new io.github.billstark001.latticium.planning.Revisions.Key(
+            io.github.billstark001.latticium.planning.Revisions.Domain.REGISTRY, "registry"),
+        registryRevision,
+        io.github.billstark001.latticium.planning.Revisions.Reliability.VERSIONED);
     LatticiumClient.get().registryReloaded(minecraft);
   }
 }
