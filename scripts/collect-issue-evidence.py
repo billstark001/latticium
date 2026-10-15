@@ -12,7 +12,6 @@ args = parser.parse_args()
 records = []
 excluded = []
 root = Path(__file__).resolve().parent.parent
-version = next(line.split('=', 1)[1].strip() for line in (root / 'gradle.properties').read_text().splitlines() if line.startswith('mod_version='))
 for directory in args.directories:
     for row in json.loads((directory / 'summary.json').read_text(encoding='utf-8-sig')):
         if row['status'] != 'PASS':
@@ -66,6 +65,7 @@ for directory in args.directories:
             assert 'latticiumaudit' not in result['environment']['mods']
             record['modLocation'] = re.search(r'ordinary artifact mod location=(.*?) disabled profiles', log)[1]
             target = row['target']
+            version = result['environment']['mods']['latticium']
             loader = 'neoforge' if 'neoforge' in target else 'fabric'
             main = loader + '-' + target[-4:]
             run = root / ('integrations' if bridge else 'versions') / target / 'build/minedriver/runs/mineDriverCheck' / row['runId'] / 'mods'

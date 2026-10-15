@@ -1,0 +1,51 @@
+[
+  {
+    "target": "fabric-26.2",
+    "jar": "versions/fabric-26.2/build/libs/latticium-fabric-26.2-0.0.4.jar",
+    "size": 4137375,
+    "sha256": "f9e34f46b973f5247b04af573e184892e94aa9bc5807084b2258625df1de138a",
+    "status": "PASS"
+  },
+  {
+    "target": "fabric-26.3",
+    "jar": "versions/fabric-26.3/build/libs/latticium-fabric-26.3-0.0.4.jar",
+    "size": 4137191,
+    "sha256": "d7e4258f3f19fce6f670ed649026bbd9aad20aaf328182f3d14dee3ce254a117",
+    "status": "PASS"
+  },
+  {
+    "target": "neoforge-26.2",
+    "jar": "versions/neoforge-26.2/build/libs/latticium-neoforge-26.2-0.0.4.jar",
+    "size": 4114186,
+    "sha256": "c5ee8b922db957c45a7004abd44e85ab45bae088967f51007a04154e3e3483a4",
+    "status": "PASS"
+  },
+  {
+    "target": "neoforge-26.3",
+    "jar": "versions/neoforge-26.3/build/libs/latticium-neoforge-26.3-0.0.4.jar",
+    "size": 4113990,
+    "sha256": "f87f0989d8824085cc673a9dee68b289ace2cab7721c2953c3258c01619d358c",
+    "status": "PASS"
+  },
+  {
+    "target": "litematica-fabric-26.2",
+    "jar": "integrations/litematica-fabric-26.2/build/libs/latticium-litematica-fabric-26.2-0.0.4.jar",
+    "size": 6463,
+    "sha256": "824648f0274a58db7becde148ffbb03bba2f5f5a6cb261705c8fac41f9988ceb",
+    "status": "PASS"
+  },
+  {
+    "target": "litematica-fabric-26.3",
+    "jar": "integrations/litematica-fabric-26.3/build/libs/latticium-litematica-fabric-26.3-0.0.4.jar",
+    "size": 6465,
+    "sha256": "34a91141d3fb205f3356ba2eb5bd8b290b3640222bb27df54d945dd44054c54e",
+    "status": "PASS"
+  },
+  {
+    "target": "forgematica-neoforge-26.2",
+    "jar": "integrations/forgematica-neoforge-26.2/build/libs/latticium-forgematica-neoforge-26.2-0.0.4.jar",
+    "size": 7739,
+    "sha256": "deff937c982e45c05b689bda8d1b60efbb33fa5fa3d93cd6953f5e939af338dc",
+    "status": "PASS"
+  }
+]

@@ -1,8 +1,10 @@
 # Changelog
 
-All notable changes to Latticium are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). The single source for the mod version is `mod_version` in `gradle.properties`. Entries remain under Unreleased until a release is tagged.
+All notable changes to Latticium are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). The single source for the mod version is `mod_version` in `gradle.properties`. Entries remain under Unreleased until a version is prepared; publishing requires a separate release tag.
 
 ## [Unreleased]
+
+## [0.0.4] - 2026-10-16
 
 ### Added
 

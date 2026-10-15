@@ -1,12 +1,24 @@
 # Issues #2 and #3: implementation and acceptance
 
-Date: 2026-10-16. Baseline: `0b35e15` / released 0.0.3. This work remains under
-`Unreleased`; a JAR reporting 0.0.3 in the following development runs includes the local
-changes and is not the previously published release artifact.
+Date: 2026-10-16. Baseline: `0b35e15` / released 0.0.3. These changes are prepared as
+0.0.4 without a release tag. A JAR reporting 0.0.3 in the following development runs
+includes the implementation changes and is not the previously published release artifact.
 
 The [implementation plan](issues-2-3-plan.md) defines the accepted gates. The
 [execution reference](execution-options.md) defines defaults, configurable alternatives and
 their limits. Native cross-tick search frontiers and worker planning remain disabled.
+
+## 0.0.4 version preparation
+
+The version was bumped to 0.0.4 on 2026-10-16 without creating a tag or publishing a release.
+`check buildAll :planning-core:officialTest`, seven-artifact verification and release collection
+passed. All three bridges require the matching 0.0.4 main mod. Runtime class bytes in all
+seven JARs are identical to the accepted development artifacts below; this preparation changes
+version metadata and documentation. The 33 native reports retain their original 0.0.3 labels
+and are not presented as new 0.0.4 launches. The historical collector now uses each report's
+recorded runtime version and successfully revalidated those reports after the bump.
+[Prepared artifact hashes](evidence/0.0.4-artifacts.json) are recorded separately from the
+original acceptance evidence.
 
 ## Acceptance mapping
 

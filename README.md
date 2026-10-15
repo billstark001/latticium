@@ -50,6 +50,6 @@ Each target has its own `run/` directory. The [contribution guide](CONTRIBUTING.
 
 ## Current maturity
 
-The Java build and tests pass. The Unreleased execution work adds real dependency-qualified revisions, configurable task intent, fresh planning after confirmed steps, bounded candidate streaming and explicit settling/repeated work. [Execution options](docs/execution-options.md) are available in profiles and the native four-language editor; the [implementation plan](docs/issues-2-3-plan.md) maps the work to issues #2 and #3.
+The Java build and tests pass. The 0.0.4 execution work adds real dependency-qualified revisions, configurable task intent, fresh planning after confirmed steps, bounded candidate streaming and explicit settling/repeated work. [Execution options](docs/execution-options.md) are available in profiles and the native four-language editor; the [implementation plan](docs/issues-2-3-plan.md) maps the work to issues #2 and #3.
 
 The [current acceptance report](docs/issues-2-3-validation.md) separates integrated gameplay, real dedicated connections, 1,024-cell survival blueprints, predictor/modded-block fixtures, performance measurements and built-JAR discovery. The [validation history](docs/26.2-26.3-validation.md) preserves earlier release results. These finite fixtures do not establish arbitrary modpack compatibility, model every multi-block/modded effect or enable native cross-tick frontier reuse. Main mods work without schematic mods; bridges require their matching Latticium and source mod versions.
