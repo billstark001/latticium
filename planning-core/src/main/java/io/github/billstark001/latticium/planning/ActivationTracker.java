@@ -18,6 +18,7 @@ public final class ActivationTracker {
 
   /**
    * Samples one capture; missing player or unknown membership defers without changing edge state.
+   * The host must capture the player anchor even when the predicate has no PLAYER dependency.
    */
   public Decision sample(Profile.Activation activation, Compiler.Bound where, Facts facts) {
     var player = facts.player();
@@ -44,6 +45,14 @@ public final class ActivationTracker {
       return Decision.START;
     }
     return Decision.CONTINUE;
+  }
+
+  /**
+   * Reports a rejected START so a while activation can retry at its next known inside sample. Enter
+   * activation keeps its consumed edge; this does not manufacture a new outside sample.
+   */
+  public void startFailed() {
+    active = false;
   }
 
   /** Forgets the previous known sample and any active while-triggered job. */

@@ -66,4 +66,34 @@ class ActivationTrackerTest {
     tracker.reset();
     assertEquals(ActivationTracker.Decision.START, tracker.sample(activation, where, FACTS));
   }
+
+  @Test
+  void rejectedWhileStartRetriesAfterRecoveryWithoutLosingUnknownSemantics() {
+    var now = new Truth[] {Truth.TRUE};
+    var where = new Compiler.Bound(SetType.POS, (facts, pos, value) -> now[0], 0);
+    var activation = new Profile.Activation("", Profile.Activation.Mode.WHILE, false);
+    var tracker = new ActivationTracker();
+    assertEquals(ActivationTracker.Decision.START, tracker.sample(activation, where, FACTS));
+    tracker.startFailed();
+    now[0] = Truth.UNKNOWN;
+    assertEquals(ActivationTracker.Decision.DEFER, tracker.sample(activation, where, FACTS));
+    now[0] = Truth.TRUE;
+    assertEquals(ActivationTracker.Decision.START, tracker.sample(activation, where, FACTS));
+    assertEquals(ActivationTracker.Decision.CONTINUE, tracker.sample(activation, where, FACTS));
+  }
+
+  @Test
+  void rejectedEnterStartDoesNotInventAnotherEdge() {
+    var now = new Truth[] {Truth.TRUE};
+    var where = new Compiler.Bound(SetType.POS, (facts, pos, value) -> now[0], 0);
+    var activation = new Profile.Activation("", Profile.Activation.Mode.ENTER, true);
+    var tracker = new ActivationTracker();
+    assertEquals(ActivationTracker.Decision.START, tracker.sample(activation, where, FACTS));
+    tracker.startFailed();
+    assertEquals(ActivationTracker.Decision.IDLE, tracker.sample(activation, where, FACTS));
+    now[0] = Truth.FALSE;
+    tracker.sample(activation, where, FACTS);
+    now[0] = Truth.TRUE;
+    assertEquals(ActivationTracker.Decision.START, tracker.sample(activation, where, FACTS));
+  }
 }

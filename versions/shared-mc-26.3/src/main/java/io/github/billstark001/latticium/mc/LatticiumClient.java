@@ -148,7 +148,7 @@ public final class LatticiumClient {
       return;
     int radius = 0;
     boolean hasActivation = false;
-    var dependencies = FactDependencies.NONE;
+    var dependencies = FactDependencies.of(FactDependencies.Fact.PLAYER);
     for (var id : enabled.stream().sorted().toList()) {
       if (job != null && !job.isFinished() && !id.equals(activeAutoId)) continue;
       try {
@@ -196,6 +196,7 @@ public final class LatticiumClient {
           activeAutoId = id;
           autoErrors.remove(id);
         } catch (RuntimeException error) {
+          tracker.startFailed();
           autoErrors.put(
               id, Objects.toString(error.getMessage(), error.getClass().getSimpleName()));
         }
