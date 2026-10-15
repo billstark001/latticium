@@ -53,6 +53,17 @@ class PlannerEdgeTest {
   }
 
   @Test
+  void unrepresentableRouteCostCannotAuthorizeANoPlanFallback() {
+    var policy = new Profile.Policy(Profile.Policy.BreakMode.SELECTED, 1, 8);
+    Planner.Oracle oracle =
+        (position, current, goal) ->
+            new Planner.Prediction.Proposals(
+                List.of(current.equals(START) ? step(HEAVY, Integer.MAX_VALUE) : step(GOAL, 1)));
+    var result = new Planner().plan(POSITION, START, new TargetCell.Exact(GOAL), policy, oracle, 4);
+    assertEquals(new Planner.Result.Deferred("Plan cost exceeds integer range"), result);
+  }
+
+  @Test
   void transitionMustDeclareTheChangedCell() {
     Planner.Oracle oracle =
         (position, current, goal) ->

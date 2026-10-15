@@ -11,7 +11,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/** Binds symbolic expressions to a registry without retaining game objects. */
+/**
+ * Binds symbolic expressions to a registry without retaining game objects. Instances are mutable
+ * and thread-confined; fork a compiler for an independent binding session. Worker evaluation also
+ * requires immutable facts and thread-safe memberships supplied by trusted extensions.
+ */
 public final class Compiler {
   private static final int DEFAULT_MAX_RADIUS = 32;
   static final int MAX_EXPANSION_DEPTH = 64;

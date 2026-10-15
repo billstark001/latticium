@@ -274,13 +274,15 @@ public final class Planner {
           if (step.action() == Action.BREAK && policy.breakMode() == Profile.Policy.BreakMode.DENY)
             continue;
           if (!step.affectsOnly(pos)) continue;
+          if (step.cost().actions() > policy.maxActionsPerActivation() - node.cost().actions())
+            continue;
           Cost cost;
           try {
             cost = node.cost().plus(step.cost());
           } catch (ArithmeticException overflow) {
+            if (unknownReason == null) unknownReason = "Plan cost exceeds integer range";
             continue;
           }
-          if (cost.actions() > policy.maxActionsPerActivation()) continue;
           var previous = best.get(step.result());
           if (previous != null && previous.compareTo(cost) <= 0) continue;
           if ((previous == null && best.size() >= MAX_SEARCH_STATES)
