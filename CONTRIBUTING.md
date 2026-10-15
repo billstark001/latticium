@@ -16,7 +16,7 @@ On Windows, `./scripts/run-local-neoforge-smoke.ps1` uses the sibling MineDriver
 
 ## Gameplay probes with MineDriver
 
-The optional [MineDriver](https://github.com/billstark001/minedriver) adapter reuses `scripts/audit/` in a fresh, isolated client directory. It is enabled only by the init script; ordinary client runs, verification and release JARs do not include it. Build `:gradle-plugin:jar` in the MineDriver checkout first, then run from this repository root:
+The optional [MineDriver 0.2.0](https://github.com/billstark001/minedriver/releases/tag/v0.2.0) adapter reuses `scripts/audit/` in a fresh, isolated client directory. It is enabled only by the init script; ordinary client runs, verification and release JARs do not include it. Build `:gradle-plugin:jar` in the MineDriver checkout first, then run from this repository root:
 
 ```powershell
 .\gradlew.bat -I scripts/minedriver.init.gradle `

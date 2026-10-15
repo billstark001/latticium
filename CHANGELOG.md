@@ -4,6 +4,32 @@ All notable changes to Latticium are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-10-16
+
+### Fixed
+
+- Exact replacement checks `target.using` against the post-break placement before removing the source; a forbidden material no longer leaves an unfinished hole.
+- Confirmation checks authoritative packet states as well as visible client state, preventing hidden server contradictions from being mistaken for successful local prediction. Changed targets and interrupted breaks terminate their receipts and stop continued destruction.
+- Native capture and action boundaries convert failed/null external target reads into explicit Unknown results.
+- Accumulated planner cost overflow defers instead of falsely proving that no non-breaking path exists.
+- Blueprint sessions track source metadata modification markers and stay invalid after an observed placement/revision change, even if the old metadata returns.
+- Constant/coordinate-only automatic activations capture their player anchor; failed while-triggered starts retry after their missing inputs recover without inventing enter edges.
+- Temporary hotbar-slot exhaustion preserves confirmed multi-step progress, allowing survival snow stacking to resume after replenishment.
+- The Forgematica bridge serializes MaFgLib initialization-handler registration, preventing parallel NeoForge mod constructors from corrupting its shared list or losing registrations.
+- The open-controls pause setting uses shorter labels at Minecraft's minimum GUI width, with its full meaning retained in four-language tooltips.
+
+### Changed
+
+- Native planning retries increase their node budget under a shared per-tick expansion cap, using fresh facts on each retry. Frozen targets and confirmed partial steps remain intact.
+- Candidate membership, target, partial state and retry scheduling share one store with constant-time removal. Equal consecutive immutable multi-column capture cells share storage while all native facts are still sampled.
+
+### Added
+
+- Opt-in MineDriver gameplay/UI integration and a seven-target matrix runner with fresh report validation and read-only schematic integrity checks.
+- Startup smoke checks assert the native title screen instead of inferring readiness from audio logs; exact-state fixtures disable natural grass growth and retain bounded action traces for failures.
+- Regression checks for forbidden replacement materials, contradictory packets, interrupted replacements, snow layers, repeater interaction, survival replenishment, paused hotbar relocation, automatic-activation recovery, controlled chunk unload/reload and four-language controls/settings.
+- Seeded independent planner-optimum and fact-projection equivalence checks, including partial facts and integer coordinate boundaries.
+
 ## [0.0.2] - 2026-10-06
 
 ### Added
@@ -60,5 +86,6 @@ All notable changes to Latticium are recorded here. The format follows [Keep a C
 - Each blueprint bridge loaded 53 real schematics read-only and checked rotated/mirrored target reads. Source hashes, sizes and modification times remained unchanged, including a deliberate audit-timeout test.
 - Development probes are excluded from shipped JARs. These checks do not establish complete survival/server/modpack acceptance; launch conditions, measurements and remaining cases are recorded in the [validation record](https://github.com/billstark001/latticium/blob/v0.0.2/docs/26.2-26.3-validation.md).
 
-[Unreleased]: https://github.com/billstark001/latticium/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/billstark001/latticium/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/billstark001/latticium/releases/tag/v0.0.3
 [0.0.2]: https://github.com/billstark001/latticium/releases/tag/v0.0.2

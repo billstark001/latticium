@@ -2,7 +2,7 @@
 
 Latticium is a client-side construction engine for Minecraft 26.2 and 26.3 on Fabric and NeoForge. This README describes the repository and its contracts. The player-facing text for Modrinth is in [README_MODRINTH.md](README_MODRINTH.md); gameplay instructions are in [Getting started](docs/getting-started.md).
 
-Version 0.0.2 adds native task controls, a small HUD, diagnostics, and one Cloth Config / AutoConfig settings model for both loaders. UI translations are centralized in `assets/lang/` and packaged into each shared game adapter. Cloth Config is bundled; Fabric Mod Menu is an optional settings entry and NeoForge uses its built-in mod-list entry. F8 opens task controls and F9 pauses/resumes a task; selection rendering is outside this release's scope.
+Since 0.0.2, Latticium includes native task controls, a small HUD, diagnostics, and one Cloth Config / AutoConfig settings model for both loaders. UI translations are centralized in `assets/lang/` and packaged into each shared game adapter. Cloth Config is bundled; Fabric Mod Menu is an optional settings entry and NeoForge uses its built-in mod-list entry. F8 opens task controls and F9 pauses/resumes a task; selection rendering is outside this release's scope.
 
 ## Repository layout
 
@@ -50,4 +50,4 @@ Each target has its own `run/` directory. The [contribution guide](CONTRIBUTING.
 
 ## Current maturity
 
-The Java build and tests pass, and development clients have reached the title screen; NeoForge 26.2 has entered a singleplayer world. The [validation record](docs/26.2-26.3-validation.md) distinguishes those checks from gameplay acceptance. Full live fill, replace, clear, and blueprint construction checks across all targets are still open. Main mods work without schematic mods; bridges require their matching Latticium and source mod versions.
+The Java build and tests pass. Development checks have exercised server-confirmed plain-block fill/replacement, conservative breaking, snow/repeater interactions, small survival replenishment, interruption handling and four-language controls/settings across the seven pinned targets. Read-only real-schematic checks cover the three bridges. The [validation record](docs/26.2-26.3-validation.md) records the exact fixtures, versions and limits; the [October 16 audit](docs/2026-10-16-code-audit.md) explains the receipt, activation, planning and startup fixes. These checks do not establish dedicated-server, large survival blueprint or ordinary modpack acceptance. Main mods work without schematic mods; bridges require their matching Latticium and source mod versions.
