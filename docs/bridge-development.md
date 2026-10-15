@@ -25,7 +25,9 @@ Duplicate target IDs are rejected. A profile then uses `"scope": "selection(\"ac
 
 Each preview and job has a distinct `SessionId`. On `finiteBounds`, record the source placement object or stable ID, the active world/dimension, enabled subregion bounds and any source revision available. Keep snapshots keyed by session; do not let a preview overwrite the running job's snapshot. On `target`, verify that the client is still on the game thread, the world/dimension is unchanged, the same placement is selected and enabled, and its bounds or revision still match. Return `Unknown` if any check fails. A changed placement must not silently supply a new target under an old session.
 
-The current bridges delegate identity, bounds and overlap checks to the neutral `BlueprintSnapshots` helper. Its supplier produces a fresh `View` containing the world and placement identities, optional revision, enabled bounds, conflicting placement bounds, and a cell reader. Bounds are sorted so source map iteration order cannot invalidate a session; duplicate regions remain present because they signal overlap. The helper uses weak session maps to avoid retaining abandoned previews, and establishes each session only once. Repeating `finiteBounds` cannot authorize a different placement under that session. If the source API exposes an explicit lifecycle or content revision, include it in the snapshot. A bounds-only comparison cannot detect every in-place schematic edit; document that limit and test the source mod's available change signal.
+The current bridges delegate identity, bounds and overlap checks to the neutral `BlueprintSnapshots` helper. Its supplier produces a fresh `View` containing the world and placement identities, optional revision, enabled bounds, conflicting placement bounds, and a cell reader. Bounds are sorted so source map iteration order cannot invalidate a session; duplicate regions remain present because they signal overlap. The helper uses weak session maps to avoid retaining abandoned previews, and establishes each session only once. Observing a changed or removed placement invalidates that session permanently: restoring the old metadata cannot revive it, and a new job/preview needs a fresh session. Repeating `finiteBounds` cannot authorize a different placement under an old session.
+
+The three bundled bridges include the placement UUID, schematic metadata modification time and unsaved-change flag in their revision token. The UUID alone identifies the placement and is not a content revision. These source-mod markers catch reported edits even when bounds stay equal. They cannot prove that every direct container mutation advances a marker, so unreported in-place edits remain a limitation; do not treat the token as a general cache lease. If a source API exposes a stronger monotonic lifecycle/content revision, use it and test the available change signal.
 
 ## Target semantics
 
@@ -39,6 +41,8 @@ The current callbacks run on the client game thread. Never open or parse a schem
 
 The bridge has no authority to send game packets, change inventory or bypass `policy.break`. Only the Latticium action gateway performs interaction and waits for server observation. Keep all source-mod Java classes inside the bridge module so the main mod starts without that mod installed.
 
+The Forgematica bridge also contains a narrow startup compatibility mixin for MaFgLib 0.5.3. NeoForge constructs mods in parallel, while that library's initialization dispatcher performs an unsynchronized `contains`/`add` pair on an `ArrayList`. The wrapper serializes registration on the dispatcher instance and preserves the original method and duplicate check. It does not change schematic content or construction actions. The native concurrency probe makes 128 calls for 32 identity-distinct handlers, verifies exactly one registration each, then removes all test handlers before creating a world.
+
 ## Packaging and verification
 
 Create a version-specific project under `integrations/`, following the existing bridge Gradle and metadata files. Declare the matching Minecraft, loader, main Latticium and source-mod versions. Reference source-mod APIs at compile time; package the bridge separately. Avoid bundling the source mod into the bridge JAR. Test the assembled JAR as well as a Gradle development run.
@@ -51,6 +55,6 @@ At minimum, verify in a live client:
 4. Multiple subregions, overlaps, placement switch/removal, world switch and a second preview while a job runs cannot reuse stale targets.
 5. The bridge JAR metadata enforces matching dependencies; preview and real interaction use the expected source version.
 
-Record each Minecraft/loader/source-mod version and result in the [validation matrix](26.2-26.3-validation.md). Current title-screen checks do not constitute blueprint construction acceptance.
+Record each Minecraft/loader/source-mod version and result in the [validation matrix](26.2-26.3-validation.md). Separate title-screen, read-only target/preview, small gameplay and large survival/dedicated-server evidence. The current development probes cover the first three categories; large survival and dedicated-server construction remain open.
 
 Session metadata compares world and placement identities through weak references. A completed preview or job must not keep a disconnected client world or removed schematic alive through the provider cache. Bounds and immutable revision tokens remain neutral values. The helper rejects a stale or collected identity conservatively.

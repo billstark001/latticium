@@ -10,6 +10,44 @@ For changes to game adapters or bridges, launch the affected clients and record 
 
 Import the repository root as a Gradle project in IntelliJ IDEA with JDK 25 as the Gradle JVM, then reload Gradle. Loom generates Fabric main and bridge client configurations from the Gradle projects; they delegate to Gradle's `runClient` task and its Java 25 launcher. Run or debug NeoForge clients through the corresponding `:versions:*:runClient` Gradle task. For optional bridges, use `:integrations:*:runClient`. Avoid IDEA's gutter action on `net.neoforged.devlaunch.Main.main()`, which creates an unrelated Java run configuration. Each target keeps its own `run` directory. Do not commit generated IDEA configurations, worlds, logs or build output.
 
-On Windows, `./scripts/run-local-neoforge-smoke.ps1` starts the two main NeoForge clients and the Forgematica bridge client one at a time, checks that the expected mods and sound engine load, then closes each client. It is a startup smoke check, not an in-world interaction test.
+On Windows, `./scripts/run-local-neoforge-smoke.ps1` uses the sibling MineDriver checkout to start the two main NeoForge clients and the Forgematica bridge client one at a time in isolated directories. It asserts the native title screen after overlays finish, saves a screenshot and verifies fresh complete reports, then closes each owned client. `-MineDriverRoot` selects another checkout. This is menu-readiness evidence; use the gameplay matrix for in-world interactions. Diagnosed Cloth Config metadata warnings require the explicit `-AcceptClothLogoWarning` switch described below.
 
 `CHANGELOG.md` keeps changes under `Unreleased` until a release is prepared. A release tag must match `mod_version` and a dated changelog section. See [release instructions](docs/releasing.md).
+
+## Gameplay probes with MineDriver
+
+The optional [MineDriver](https://github.com/billstark001/minedriver) adapter reuses `scripts/audit/` in a fresh, isolated client directory. It is enabled only by the init script; ordinary client runs, verification and release JARs do not include it. Build `:gradle-plugin:jar` in the MineDriver checkout first, then run from this repository root:
+
+```powershell
+.\gradlew.bat -I scripts/minedriver.init.gradle `
+  '-Dminedriver.root=D:/Programs/minedriver' `
+  '-Dminedriver.target=neoforge-26.3' `
+  :versions:neoforge-26.3:mineDriverCheck
+```
+
+Select the loader/bridge project name with `minedriver.target` and use its corresponding qualified task. All four main clients and the three bridges use the same scenarios. MineDriver defaults to the sibling `../minedriver` checkout if `minedriver.root` is omitted. Reports and isolated saves live under the selected project's `build/reports/minedriver/` and `build/minedriver/` directories. A valid pass requires a successful Gradle exit and a fresh `result.json` with matching `runId`, `complete=true`, and `status=PASS`; `result.txt` records each gameplay assertion.
+
+For ordinary Fabric world creation with the currently pinned Fabric API, explicitly add `'-Dminedriver.disableGametest=true'`. This excludes its two native GameTest modules from this ordinary-client fixture; the historical dynamic-test initialization failure is recorded in the validation report. It does not disable tests in normal builds or authorize accepting other startup warnings. The original `scripts/run-local-gameplay-audit.ps1` remains available for the standalone probe and read-only schematic fixture matrix.
+
+Java scenarios in `scripts/minedriver/` must schedule short native operations with `ProbeContext.onClient`/`onServer`, and wait from the scenario worker. They must not call blocking driver operations from a game-thread callback. Assert server outcomes independently of local placement prediction or a successfully sent action.
+
+Exact-state gameplay fixtures explicitly set `random_tick_speed=0` in their disposable world, so dirt does not randomly become grass between assertions. This condition is logged in `result.txt`; external state-change tests still inject authoritative conflicting states. `action-trace.txt` keeps at most 128 changed observations with job status, blocked reasons, visible state and the latest server packet state. Inspect it together with `client.log`, `result.json` and the failure screenshot when diagnosing a timeout. Ordinary worlds and source schematic files are not changed by this fixture rule.
+
+`scripts/run-minedriver-audit.ps1` builds the driver and runs all seven targets sequentially, validates fresh report identities, and records a matrix summary. `-Targets` selects a subset; `-MineDriverRoot` selects another checkout. Optional `-SchematicsDirectory` passes read-only fixtures to bridge checks and compares complete before/after manifests, including SHA-256, size, modification time, additions and removals. The default scenario includes gameplay, interruption, survival replenishment, automatic-activation recovery, controlled chunk residency and four-language small-window UI checks.
+
+Use `-Scenario` on the wrapper, or `'-Dminedriver.scenario=UiScenario'` on a direct Gradle command, for a focused run:
+
+| Scenario | Scope |
+|---|---|
+| `LatticiumScenario` (default) | Full gameplay and UI; bridge fixtures when supplied; Forgematica registration stress when applicable |
+| `StartupScenario` | Native title screen and no world; no gameplay claim |
+| `UiScenario` | Fresh world and four-language controls, diagnostics and settings |
+| `ActivationScenario` | Constant activation and recovery after a rejected START |
+| `ResidencyScenario` | Controlled unload/reload packets, pending/expired receipts and deferred manual scan |
+| `BridgeConcurrencyScenario` | Forgematica only; concurrent MaFgLib handler registration and cleanup |
+
+The residency fixture deliberately sends integrated-server chunk packets. It does not establish natural-travel or dedicated-server behavior. A standalone concurrency run on another target fails rather than silently passing without exercising its dependency.
+
+NeoForge 26.2 currently reports Cloth Config 26.2.155's deprecated `logoFile` metadata in development runs. This warning screen blocks title-screen readiness: client ticks, loaded mods and audio startup do not prove that the scenario has started. MineDriver fails promptly with `STARTUP_WARNINGS` and preserves the native issues, UI tree and failure screenshot. After identifying this exact warning, use `-AcceptClothLogoWarning` on the matrix wrapper, or `'-Dminedriver.acceptClothLogoWarning=true'` on a direct command. The opt-in accepts only Cloth Config's exact metadata warning and records it in `startup.warnings`; additional warnings and all errors still fail. It does not modify dependency JARs or suppress the warning in ordinary client runs. The standalone legacy probe refuses loading error screens; prefer MineDriver for diagnosed warning acceptance.
+
+The pinned Forgematica stack additionally reports the same metadata warning for `forgematica`, `litematica`, `fabric_api_base`, `foxified_networking`, `mafglib`, `malilib` and `conditional_mixin`. `-AcceptKnownLogoWarnings` explicitly accepts this fixed list plus Cloth Config on the affected targets. Direct Forgematica commands need both `'-Dminedriver.acceptClothLogoWarning=true'` and `'-Dminedriver.acceptBridgeLogoWarnings=true'`. A new mod ID, a different issue key, or an error remains a blocker. Accepted issues are always retained in the report; no production/unsupported-runtime guard is relaxed.
