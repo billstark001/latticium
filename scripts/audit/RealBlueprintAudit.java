@@ -11,7 +11,7 @@ final class RealBlueprintAudit {
   private final Minecraft mc = Minecraft.getInstance();
   private final LatticiumClient.BlueprintProvider bridge;
   private final Object manager;
-  private final Path folder;
+  private final List<Path> files;
   private final List<Path> samples;
   private final Path output;
   private final StringBuilder report = new StringBuilder();
@@ -21,6 +21,11 @@ final class RealBlueprintAudit {
   private int next;
   private int exactCells;
   private final int fileCount;
+  private final Set<BlockState> uniqueStates = new HashSet<>();
+  private final Random paletteRandom = new Random(10062026);
+  private int nextFile;
+  private int paletteRegions;
+  private int paletteCells;
 
   static Object call(Object receiver, String name, Object... args) throws Exception {
     return AuditProbe.call(receiver, name, args);
@@ -35,9 +40,7 @@ final class RealBlueprintAudit {
       throws Exception {
     this.bridge = bridge;
     this.manager = manager;
-    this.folder = folder;
     this.output = output;
-    List<Path> files;
     try (var stream = Files.walk(folder)) {
       files =
           stream
@@ -48,53 +51,56 @@ final class RealBlueprintAudit {
     }
     fileCount = files.size();
     check(fileCount > 0, "No .litematic fixtures found");
-    int regions = 0, cells = 0;
-    var uniqueStates = new HashSet<BlockState>();
-    var random = new Random(10062026);
-    for (var file : files) {
-      Object schematic = load(file);
-      var areas = (Map<?, ?>) call(schematic, "getAreaSizes");
-      regions += areas.size();
-      for (var entry : areas.entrySet()) {
-        var container = call(schematic, "getSubRegionContainer", entry.getKey());
-        var size = (net.minecraft.core.Vec3i) call(container, "getSize");
-        for (int i = 0; i < 100; i++) {
-          var state =
-              (net.minecraft.world.level.block.state.BlockState)
-                  call(
-                      container,
-                      "get",
-                      random.nextInt(size.getX()),
-                      random.nextInt(size.getY()),
-                      random.nextInt(size.getZ()));
-          var neutral = MinecraftStateCodec.state(state);
-          check(
-              MinecraftStateCodec.state(neutral).orElseThrow() == state,
-              "Real palette state roundtrip failed: " + file.getFileName());
-          uniqueStates.add(neutral);
-          cells++;
-        }
-      }
-      report
-          .append("READ ")
-          .append(file.getFileName())
-          .append(" regions=")
-          .append(areas.size())
-          .append("\n");
-    }
     var chosen = new ArrayList<>(files);
     Collections.shuffle(chosen, new Random(10062026));
     samples = List.copyOf(chosen.subList(0, Math.min(12, chosen.size())));
+  }
+
+  /**
+   * One source-mod load per client callback, rather than parsing the entire fixture set at once.
+   */
+  private void samplePalette(Path file) throws Exception {
+    Object schematic = load(file);
+    var areas = (Map<?, ?>) call(schematic, "getAreaSizes");
+    paletteRegions += areas.size();
+    for (var entry : areas.entrySet()) {
+      var container = call(schematic, "getSubRegionContainer", entry.getKey());
+      var size = (net.minecraft.core.Vec3i) call(container, "getSize");
+      for (int i = 0; i < 100; i++) {
+        var state =
+            (net.minecraft.world.level.block.state.BlockState)
+                call(
+                    container,
+                    "get",
+                    paletteRandom.nextInt(size.getX()),
+                    paletteRandom.nextInt(size.getY()),
+                    paletteRandom.nextInt(size.getZ()));
+        var neutral = MinecraftStateCodec.state(state);
+        check(
+            MinecraftStateCodec.state(neutral).orElseThrow() == state,
+            "Real palette state roundtrip failed: " + file.getFileName());
+        uniqueStates.add(neutral);
+        paletteCells++;
+      }
+    }
     report
-        .append("Read ")
-        .append(files.size())
-        .append(" files / ")
-        .append(regions)
-        .append(" regions; ")
-        .append(cells)
-        .append(" sampled palette cells / ")
-        .append(uniqueStates.size())
-        .append(" distinct exact states.\n");
+        .append("READ ")
+        .append(file.getFileName())
+        .append(" regions=")
+        .append(areas.size())
+        .append("\n");
+    if (nextFile == files.size()) {
+      report
+          .append("Read ")
+          .append(files.size())
+          .append(" files / ")
+          .append(paletteRegions)
+          .append(" regions; ")
+          .append(paletteCells)
+          .append(" sampled palette cells / ")
+          .append(uniqueStates.size())
+          .append(" distinct exact states.\n");
+    }
     Files.writeString(output.resolve("real-schematics.txt"), report);
   }
 
@@ -110,6 +116,10 @@ final class RealBlueprintAudit {
   }
 
   boolean tick() throws Exception {
+    if (nextFile < files.size()) {
+      samplePalette(files.get(nextFile++));
+      return false;
+    }
     if (placement == null) {
       if (next >= samples.size()) {
         check(exactCells > 0, "No loaded real blueprint cells checked");

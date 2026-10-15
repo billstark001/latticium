@@ -1,0 +1,42 @@
+// Opt-in only: build MineDriver's :gradle-plugin:jar before invoking this init script.
+initscript {
+    def driverRoot = new File(System.getProperty('minedriver.root', new File(gradle.startParameter.currentDir, '../minedriver').path))
+    repositories { mavenCentral() }
+    dependencies {
+        classpath files(new File(driverRoot, 'gradle-plugin/build/libs/minedriver-gradle-plugin-0.2.0.jar'))
+        classpath files(new File(driverRoot, 'protocol/build/libs/minedriver-protocol-0.2.0.jar'))
+        classpath 'com.google.code.gson:gson:2.13.2'
+    }
+}
+
+gradle.beforeProject { project ->
+    if (project.name == System.getProperty('minedriver.target', 'fabric-26.3')) {
+        project.pluginManager.apply(io.github.billstark001.minedriver.gradle.MineDriverPlugin)
+        project.sourceSets.minedriver.java.setSrcDirs([
+            project.rootProject.file('scripts/audit'), project.rootProject.file('scripts/minedriver')
+        ])
+        project.mineDriver {
+            scenarios.add(System.getProperty('minedriver.scenario', 'LatticiumScenario'))
+            timeoutMillis.set(Long.parseLong(System.getProperty('minedriver.timeoutMillis', '600000')))
+            def logoWarning = 'Mod %s uses the deprecated `logoFile` property; change to `bannerFile` and/or (for square icons) `iconFile`'
+            if (System.getProperty('minedriver.acceptClothLogoWarning', 'false') == 'true') {
+                acceptedStartupWarnings.add('cloth_config:' + logoWarning)
+            }
+            if (project.name == 'forgematica-neoforge-26.2' &&
+                    System.getProperty('minedriver.acceptBridgeLogoWarnings', 'false') == 'true') {
+                ['forgematica', 'litematica', 'fabric_api_base', 'foxified_networking',
+                 'mafglib', 'malilib', 'conditional_mixin'].each { modId ->
+                    acceptedStartupWarnings.add(modId + ':' + logoWarning)
+                }
+            }
+            if (System.getProperty('minedriver.disableGametest', 'false') == 'true') {
+                disabledModIds.addAll('fabric-gametest-api-v1', 'fabric-client-gametest-api-v1')
+            }
+        }
+        project.tasks.withType(io.github.billstark001.minedriver.gradle.MineDriverRun).configureEach {
+            if (System.getProperty('minedriver.schematics')) {
+                systemProperty 'latticium.audit.schematics', System.getProperty('minedriver.schematics')
+            }
+        }
+    }
+}

@@ -15,7 +15,9 @@ import net.minecraft.world.level.block.Blocks;
 public final class AuditProbe implements Runnable {
   private static volatile boolean done;
   private final Minecraft minecraft = Minecraft.getInstance();
-  private final Path output = Path.of(System.getProperty("latticium.audit.output"));
+  private final Path output;
+  private final boolean managed;
+  private volatile Throwable failure;
   private final StringBuilder results = new StringBuilder();
   private long end = System.currentTimeMillis() + 600_000;
   private int stage;
@@ -30,6 +32,27 @@ public final class AuditProbe implements Runnable {
   private FillAudit fill;
   private ReloadReceiptAudit reloadReceipt;
   private ReplacementSafetyAudit safety;
+  private ReceiptInterruptionAudit interruption;
+  private InteractionAudit interactions;
+  private AuditTrace trace;
+  private java.util.concurrent.CompletableFuture<Void> fixture;
+
+  public AuditProbe() {
+    output = Path.of(System.getProperty("latticium.audit.output"));
+    managed = false;
+  }
+
+  /** Reuses the gameplay checks in a MineDriver-owned world and lifecycle. */
+  public AuditProbe(Path output) {
+    this.output = output;
+    managed = true;
+    stage = 2;
+    done = false;
+  }
+
+  public Throwable failure() {
+    return failure;
+  }
 
   public static boolean isDone() {
     return done;
@@ -53,6 +76,11 @@ public final class AuditProbe implements Runnable {
     if (!condition) throw new AssertionError(message);
   }
 
+  void trace(String label, ClientJob currentJob, Position at) throws Exception {
+    if (trace == null) trace = new AuditTrace(output);
+    trace.observe(label, currentJob, at);
+  }
+
   void pass(String message) throws Exception {
     results.append("PASS: ").append(message).append('\n');
     System.out.println("LATTICIUM_AUDIT " + message);
@@ -71,12 +99,13 @@ public final class AuditProbe implements Runnable {
                 + scenario
                 + (job == null ? "" : ", " + job.status()));
       Object screen = minecraft.gui.screen();
+      trace("stage=" + stage + ", scenario=" + scenario, job, position);
       if (stage == 0) {
+        if (screen != null && screen.getClass().getSimpleName().equals("LoadingErrorScreen"))
+          throw new AssertionError(
+              "Mod loading warning/error blocks startup; inspect latest.log. Use MineDriver's exact acceptedStartupWarnings list for diagnosed warnings.");
         if (screen != null
-            && (screen.getClass().getSimpleName().equals("NoticeScreen")
-                || screen.getClass().getSimpleName().equals("WarningScreen")
-                || screen.getClass().getSimpleName().equals("AccessibilityOnboardingScreen")
-                || screen.getClass().getSimpleName().equals("LoadingErrorScreen"))) {
+            && screen.getClass().getSimpleName().equals("AccessibilityOnboardingScreen")) {
           for (Object child : (List<?>) call(screen, "children")) {
             if (!(child instanceof net.minecraft.client.gui.components.Button)) continue;
             String label = call(call(child, "getMessage"), "getString").toString();
@@ -130,6 +159,29 @@ public final class AuditProbe implements Runnable {
         }
       } else if (stage == 2) {
         if (minecraft.level == null || minecraft.player == null || screen != null) return;
+        if (fixture == null) {
+          fixture = new java.util.concurrent.CompletableFuture<>();
+          var server = minecraft.getSingleplayerServer();
+          server.execute(
+              () -> {
+                try {
+                  var rules = server.getGameRules();
+                  rules.set(
+                      net.minecraft.world.level.gamerules.GameRules.RANDOM_TICK_SPEED, 0, server);
+                  check(
+                      rules.get(net.minecraft.world.level.gamerules.GameRules.RANDOM_TICK_SPEED)
+                          == 0,
+                      "Fixture random tick rule was not applied");
+                  fixture.complete(null);
+                } catch (Throwable error) {
+                  fixture.completeExceptionally(error);
+                }
+              });
+          return;
+        }
+        if (!fixture.isDone()) return;
+        fixture.join();
+        pass("isolated exact-state fixture: random_tick_speed=0 (natural grass growth disabled)");
         LatticiumClient.get().stopAll();
         var feet = minecraft.player.blockPosition();
         target = feet.offset(2, 0, 0);
@@ -237,11 +289,20 @@ public final class AuditProbe implements Runnable {
         stage = 9;
         end = System.currentTimeMillis() + 45_000;
       } else if (stage == 9 && safety.tick()) {
+        interruption = new ReceiptInterruptionAudit(this, minecraft, position, target);
+        stage = 10;
+        end = System.currentTimeMillis() + 60_000;
+      } else if (stage == 10 && interruption.tick()) {
+        interactions = new InteractionAudit(this, minecraft, position, target);
+        stage = 11;
+        end = System.currentTimeMillis() + 90_000;
+      } else if (stage == 11 && interactions.tick()) {
         Files.writeString(output.resolve("result.txt"), results + "PASS: all audit checks\n");
         done = true;
-        minecraft.stop();
+        if (!managed) minecraft.stop();
       }
     } catch (Throwable failure) {
+      this.failure = failure;
       failure.printStackTrace();
       try {
         Files.createDirectories(output);
@@ -252,8 +313,10 @@ public final class AuditProbe implements Runnable {
       if (fill != null) fill.close();
       if (reloadReceipt != null) reloadReceipt.close();
       if (safety != null) safety.close();
+      if (interruption != null) interruption.close();
+      if (interactions != null) interactions.close();
       done = true;
-      minecraft.stop();
+      if (!managed) minecraft.stop();
     }
   }
 

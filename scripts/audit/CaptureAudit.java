@@ -50,6 +50,7 @@ final class CaptureAudit {
     probe.check(targetCalls[0] == 0, "State-only capture called provider");
     var allFacts = ((Host.Capture.Ready) all.capture(key, 0)).snapshot().facts();
     probe.check(targetCalls[0] == 4096, "Full capture target count incorrect");
+    checkNativeColumns(probe, minecraft, key.section(), allFacts);
     var compiler = new Compiler(new MinecraftRegistry(minecraft.level), 16);
     var select =
         compiler.compile("current(b{minecraft:air}) | current(b{minecraft:stone})", SetType.POS);
@@ -144,6 +145,36 @@ final class CaptureAudit {
     benchmark(probe, "coordinate", none, key);
     benchmark(probe, "state halo16", state, key, 16);
     benchmark(probe, "all halo16", all, key, 16);
+  }
+
+  private static void checkNativeColumns(
+      AuditProbe probe, Minecraft minecraft, SectionScanner.SectionKey section, Facts captured) {
+    for (int sample = 0; sample < 256; sample++) {
+      int index = sample * 17;
+      var position =
+          new Position(
+              section.dimension(),
+              (section.x() << 4) + (index & 15),
+              (section.y() << 4) + ((index >> 8) & 15),
+              (section.z() << 4) + ((index >> 4) & 15));
+      var at = new net.minecraft.core.BlockPos(position.x(), position.y(), position.z());
+      var nativeState = minecraft.level.getBlockState(at);
+      var cell = captured.world(position).orElseThrow();
+      probe.check(
+          cell.state().equals(MinecraftStateCodec.state(nativeState))
+              && cell.biome()
+                  .equals(
+                      MinecraftStateCodec.id(
+                          minecraft.level.getBiome(at).unwrapKey().orElseThrow().identifier()))
+              && cell.fluid()
+                  .equals(
+                      MinecraftStateCodec.id(
+                          net.minecraft.core.registries.BuiltInRegistries.FLUID.getKey(
+                              minecraft.level.getFluidState(at).getType())))
+              && cell.light() == minecraft.level.getRawBrightness(at, 0)
+              && cell.solid() == nativeState.isCollisionShapeFullBlock(minecraft.level, at),
+          "Captured columns differ from native cell at " + position);
+    }
   }
 
   static void benchmark(

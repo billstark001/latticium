@@ -77,7 +77,7 @@ final class ReplacementSafetyAudit {
       String json =
           """
           {"schema":1,"id":"test:replacement_safety","scope":"box(%d,%d,%d,%d,%d,%d)",
-           "select":{"where":"all()"},"target":{"source":"test:safety"},
+           "select":{"where":"all()"},"target":{"source":"test:safety"%s},
            "policy":{"break":"selected","max_actions_per_activation":2}}
           """
               .formatted(
@@ -86,7 +86,8 @@ final class ReplacementSafetyAudit {
                   position.z(),
                   position.x(),
                   position.y(),
-                  position.z());
+                  position.z(),
+                  scenario == 4 ? ",\"using\":\"i{stone}\"" : "");
       TargetCell goal =
           scenario == 3
               ? new TargetCell.Clear()
@@ -117,12 +118,13 @@ final class ReplacementSafetyAudit {
               "fluid-containing replacement preserves its waterlogged source without breaking";
           case 1 -> "replacement without verifiable post-break support preserves its source";
           case 2 -> "property-sensitive exact replacement defers before destructive fallback";
-          default -> "single-cell clear defers a door without destroying either half";
+          case 3 -> "single-cell clear defers a door without destroying either half";
+          default -> "replacement with a forbidden post-break material preserves its source";
         });
     job.leaveWorld();
     job = null;
     stage = 0;
-    return ++scenario == 4;
+    return ++scenario == 5;
   }
 
   void close() {

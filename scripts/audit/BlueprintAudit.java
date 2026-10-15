@@ -156,6 +156,22 @@ final class BlueprintAudit {
             FactDependencies.of(Fact.TARGET));
     CaptureAudit.benchmark(probe, "blueprint batch", batch, key);
     CaptureAudit.benchmark(probe, "blueprint points", points, key);
+    var metadata = call(schematic, "getMetadata");
+    long modified = (long) call(metadata, "getTimeModified");
+    call(metadata, "setTimeModified", modified + 1);
+    probe.check(
+        bridge.target(p, blueprintSession) instanceof TargetCell.Unknown,
+        "In-place schematic revision reused the old target session");
+    call(metadata, "setTimeModified", modified);
+    probe.check(
+        bridge.target(p, blueprintSession) instanceof TargetCell.Unknown,
+        "Restoring metadata revived an invalidated target session");
+    blueprintSession = new Host.SessionId();
+    bridge.finiteBounds("active_blueprint", blueprintSession);
+    probe.check(
+        bridge.target(p, blueprintSession).equals(first), "Fresh revision session did not recover");
+    probe.pass(
+        "schematic metadata revision invalidates the old session permanently; a fresh session recovers");
     Object conflict =
         call(
             Class.forName("fi.dy.masa.litematica.schematic.placement.SchematicPlacement"),

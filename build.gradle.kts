@@ -133,7 +133,7 @@ repositories { mavenCentral() }
 spotless {
     java {
         googleJavaFormat("1.30.0")
-        target("scripts/audit/**/*.java")
+        target("scripts/audit/**/*.java", "scripts/minedriver/**/*.java")
     }
     kotlin {
         target("**/*.kt")
