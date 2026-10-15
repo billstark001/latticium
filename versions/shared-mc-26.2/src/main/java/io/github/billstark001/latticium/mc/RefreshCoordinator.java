@@ -376,6 +376,19 @@ final class RefreshCoordinator {
     int maxX = Math.floorDiv((int) Math.min(x1, Integer.MAX_VALUE), 16);
     int maxY = Math.floorDiv((int) Math.min(y1, Integer.MAX_VALUE), 16);
     int maxZ = Math.floorDiv((int) Math.min(z1, Integer.MAX_VALUE), 16);
+    // A huge player sphere can intersect a tiny finite scope. Visit the smaller domain,
+    // without multiplying all three spans (their product can exceed long range).
+    long plane = ((long) maxX - minX + 1) * ((long) maxY - minY + 1);
+    if (plane > sectionIndex.size() || (long) maxZ - minZ + 1 > sectionIndex.size() / plane) {
+      for (var key : sectionIndex.keySet())
+        if (key.x() >= minX
+            && key.x() <= maxX
+            && key.y() >= minY
+            && key.y() <= maxY
+            && key.z() >= minZ
+            && key.z() <= maxZ) dirtySections.add(key);
+      return;
+    }
     for (int y = minY; y <= maxY; y++)
       for (int z = minZ; z <= maxZ; z++)
         for (int x = minX; x <= maxX; x++) {

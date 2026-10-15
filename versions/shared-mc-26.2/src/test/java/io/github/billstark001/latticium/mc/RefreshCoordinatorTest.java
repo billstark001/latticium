@@ -106,6 +106,26 @@ class RefreshCoordinatorTest {
     assertTrue(refresh.nextDirtyPositions(1, 8).stream().allMatch(position -> position.x() >= 18));
   }
 
+  @Test
+  void broadPlayerInfluenceStaysInsideFiniteSectionsAtCoordinateEdges() {
+    for (int edge : new int[] {Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+      int low = edge == Integer.MIN_VALUE ? edge : edge - 15;
+      int high = edge == Integer.MIN_VALUE ? edge + 15 : edge;
+      var refresh =
+          coordinator(
+              "box(" + low + ",0,0," + high + ",0,0)", "sphere(player,32)", "continuous", at(edge));
+      while (refresh.nextSection(1) != null) {
+        /* Finish the initial scan. */
+      }
+      refresh.playerMoved(at(edge == Integer.MIN_VALUE ? Integer.MAX_VALUE : Integer.MIN_VALUE));
+      assertEquals(1, refresh.dirtyCount());
+      var dirty = refresh.nextSection(1);
+      assertNotNull(dirty);
+      assertEquals(Math.floorDiv(edge, 16), dirty.key().x());
+      assertNull(refresh.nextSection(1));
+    }
+  }
+
   private static RefreshCoordinator coordinator(
       String scope, String select, String mode, Position player) {
     var reader = new ProfileReader();

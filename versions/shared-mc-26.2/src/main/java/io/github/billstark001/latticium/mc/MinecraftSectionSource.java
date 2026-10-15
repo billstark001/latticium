@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import net.minecraft.client.Minecraft;
@@ -173,6 +174,7 @@ public final class MinecraftSectionSource implements Host.SectionSnapshotSource 
           loaded[z * width + x] =
               level.getChunkSource().hasChunk((bounds.minX() + x) >> 4, (bounds.minZ() + z) >> 4);
       var blockPos = new BlockPos.MutableBlockPos();
+      WorldCell previous = null;
       for (int index = columns.nextWorldIndex(0);
           index >= 0;
           index = columns.nextWorldIndex(index + 1)) {
@@ -199,16 +201,24 @@ public final class MinecraftSectionSource implements Host.SectionSnapshotSource 
                 : null;
         var fluid =
             columns.needs(Fact.FLUID, index) ? level.getFluidState(blockPos).getType() : null;
-        cells[index] =
-            new WorldCell(
-                stateNeeded ? MinecraftStateCodec.state(state) : null,
-                biome,
-                fluid == null
-                    ? null
-                    : resourceIds.computeIfAbsent(
-                        BuiltInRegistries.FLUID.getKey(fluid), MinecraftStateCodec::id),
-                columns.needs(Fact.LIGHT, index) ? level.getRawBrightness(blockPos, 0) : null,
-                solidNeeded ? state.isCollisionShapeFullBlock(level, blockPos) : null);
+        var capturedState = stateNeeded ? MinecraftStateCodec.state(state) : null;
+        var capturedFluid =
+            fluid == null
+                ? null
+                : resourceIds.computeIfAbsent(
+                    BuiltInRegistries.FLUID.getKey(fluid), MinecraftStateCodec::id);
+        Integer light =
+            columns.needs(Fact.LIGHT, index) ? level.getRawBrightness(blockPos, 0) : null;
+        Boolean solid = solidNeeded ? state.isCollisionShapeFullBlock(level, blockPos) : null;
+        // Equal immutable cells in a run share storage; every native fact is still sampled.
+        if (previous == null
+            || !Objects.equals(previous.state(), capturedState)
+            || !Objects.equals(previous.biome(), biome)
+            || !Objects.equals(previous.fluid(), capturedFluid)
+            || !Objects.equals(previous.light(), light)
+            || !Objects.equals(previous.solid(), solid))
+          previous = new WorldCell(capturedState, biome, capturedFluid, light, solid);
+        cells[index] = previous;
       }
     }
     Position player = null;
