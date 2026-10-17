@@ -22,6 +22,10 @@ final class LifecycleAudit {
     controller.pause();
     probe.check(controller.uiState().job() != null, "Registry fixture did not start");
     var before = ClientRegistryState.epochs();
+    var staleSession = new Host.SessionId();
+    var staleGateway =
+        new MinecraftActionGateway(
+            minecraft, staleSession, ClientRegistryState::epochs, null, null, Map.of());
     minecraft.player.connection.handleUpdateTags(new ClientboundUpdateTagsPacket(Map.of()));
     probe.check(
         ClientRegistryState.epochs().registry() == before.registry() + 1,
@@ -65,6 +69,20 @@ final class LifecycleAudit {
         new Host.Preconditions(
             session, ClientRegistryState.epochs(), position, current, new TargetCell.Clear());
     var policy = new io.github.billstark001.latticium.planning.ProfileReader().read(json).policy();
+    var staleResult =
+        staleGateway.submit(
+            proposal,
+            new Host.Preconditions(
+                staleSession,
+                ClientRegistryState.epochs(),
+                position,
+                current,
+                new TargetCell.Clear()),
+            policy);
+    probe.check(
+        staleResult instanceof Host.Submission.Stale,
+        "Fresh caller epochs laundered an old gateway registry binding");
+    staleGateway.close();
     gateway.cancelFurtherWork();
     var rejected = gateway.submit(proposal, beforeSubmit, policy);
     probe.check(

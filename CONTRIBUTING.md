@@ -45,8 +45,40 @@ Use `-Scenario` on the wrapper, or `'-Dminedriver.scenario=UiScenario'` on a dir
 | `ActivationScenario` | Constant activation and recovery after a rejected START |
 | `ResidencyScenario` | Controlled unload/reload packets, pending/expired receipts and deferred manual scan |
 | `BridgeConcurrencyScenario` | Forgematica only; concurrent MaFgLib handler registration and cleanup |
+| `RevisionScenario` | Native read-set projection, fine/section tracking, intent policies, inventory and dimension build-height boundaries |
+| `PlanningScenario` | Native 301-expansion success, retry-cache pressure, final-cap exhaustion, primary/post-break predictor exceptions and fully known halo benchmarks |
+| `ModdedScenario` | Registered test-mod axis states and a genuinely throwing block placement predictor |
+| `DynamicScenario` | Server-confirmed fixed-position sand feed/mining with settling and finite repetition |
+| `TravelScenario` | Actual Overworld/Nether travel; old sources and jobs cannot revive after return |
+| `PerformanceScenario` | Separate capture, allocation and pure-scan percentiles at halos 0, 1 and 8 |
+| `StreamingScenario` | 1,024 survival placements, candidate cap 16, movement/refill, exact server packet coordinates and material accounting |
+| `JarInstallScenario` | Built artifact JAR discovery, main without bridge, disabled automatic profile and optional bridge discovery |
+| `DedicatedScenario` | Real remote connection, authoritative RCON assertions, natural unload/reload, refill and real blueprint source on bridge targets |
 
 The residency fixture deliberately sends integrated-server chunk packets. It does not establish natural-travel or dedicated-server behavior. A standalone concurrency run on another target fails rather than silently passing without exercising its dependency.
+
+The full scenario also includes revision, prediction, registered-mod, settling, dimension-travel,
+performance and streaming checks. Bridge targets additionally edit an unsaved source container without
+advancing metadata, request the source mod's rebuild and verify fresh reads against an immutable old
+slice. All fixtures are test-only. `LatticiumScenario`, `ModdedScenario` and `StreamingScenario` opt in
+to a separate registered fixture mod; ordinary builds and distributable JARs exclude it.
+
+Run real dedicated acceptance against a disposable loopback vanilla server (the script owns its
+world/process and removes its short-lived RCON credential):
+
+```powershell
+.\scripts\run-dedicated-audit.ps1 -Version 26.2 -AcceptKnownLogoWarnings `
+  -Targets fabric-26.2,neoforge-26.2,litematica-fabric-26.2,forgematica-neoforge-26.2
+.\scripts\run-dedicated-audit.ps1 -Version 26.3 -AcceptKnownLogoWarnings `
+  -Targets fabric-26.3,neoforge-26.3,litematica-fabric-26.3
+.\scripts\run-minedriver-audit.ps1 -Scenario JarInstallScenario -AcceptKnownLogoWarnings
+python scripts/verify-artifacts.py
+```
+
+`JarInstallScenario` strips repository class/resource directories from the game launch and seeds the
+ordinary built JARs into the owned mods directory. It verifies their actual code-source location;
+the surrounding game launch is still a development runtime. This is artifact discovery/startup
+evidence, not certification of arbitrary production modpacks. Full gameplay is tested separately.
 
 NeoForge 26.2 currently reports Cloth Config 26.2.155's deprecated `logoFile` metadata in development runs. This warning screen blocks title-screen readiness: client ticks, loaded mods and audio startup do not prove that the scenario has started. MineDriver fails promptly with `STARTUP_WARNINGS` and preserves the native issues, UI tree and failure screenshot. After identifying this exact warning, use `-AcceptClothLogoWarning` on the matrix wrapper, or `'-Dminedriver.acceptClothLogoWarning=true'` on a direct command. The opt-in accepts only Cloth Config's exact metadata warning and records it in `startup.warnings`; additional warnings and all errors still fail. It does not modify dependency JARs or suppress the warning in ordinary client runs. The standalone legacy probe refuses loading error screens; prefer MineDriver for diagnosed warning acceptance.
 

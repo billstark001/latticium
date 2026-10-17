@@ -116,6 +116,28 @@ public final class BlueprintSnapshots implements Host.TargetSource, Host.Selecti
     return Optional.of(TargetSlice.capture(session, bounds, p -> read(checked.view(), p)));
   }
 
+  /**
+   * Observed metadata is useful invalidation evidence, but direct container edits may bypass it.
+   */
+  @Override
+  public Optional<Host.SourceRevision> revision(Host.SessionId session) {
+    var checked = validate(session);
+    if (checked.view() == null) return Optional.empty();
+    var view = checked.view();
+    return Optional.of(
+        new Host.SourceRevision(
+            view.dimension()
+                + "/"
+                + System.identityHashCode(view.placement())
+                + "/"
+                + view.revision()
+                + "/"
+                + view.bounds()
+                + "/"
+                + view.conflicts(),
+            Revisions.Reliability.SHORT_LIVED));
+  }
+
   private Validated validate(Host.SessionId session) {
     var identity = sessions.get(session);
     if (identity == null) return new Validated(null, "Blueprint session changed");

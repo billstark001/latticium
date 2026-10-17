@@ -40,10 +40,12 @@ final class RefreshCoordinator {
   private List<SectionGroup> sections;
   private Map<SectionKey, SectionGroup> sectionIndex;
   private final Set<SectionGroup> deferredSections = new LinkedHashSet<>();
+  private final Set<SectionKey> parkedSections = new LinkedHashSet<>();
   private final Set<SectionKey> dirtySections = new LinkedHashSet<>();
   private final Set<Position> dirtyPositions = new LinkedHashSet<>();
   private final Map<Position, Long> deferredPositions = new HashMap<>();
   private Position lastPlayer;
+  private Position discoveryPlayer;
   private int nextSection;
   private int refreshSection = -1;
   private int unsupportedSections;
@@ -71,6 +73,7 @@ final class RefreshCoordinator {
             || profile.profile().target() instanceof Profile.Source;
     readRadius = Math.max(profile.scope().radius(), profile.select().radius());
     lastPlayer = player;
+    discoveryPlayer = player;
     rebuild(player);
   }
 
@@ -95,7 +98,7 @@ final class RefreshCoordinator {
   }
 
   int deferredCount() {
-    return deferredSections.size() + deferredPositions.size();
+    return deferredSections.size() + parkedSections.size() + deferredPositions.size();
   }
 
   int dirtyCount() {
@@ -116,6 +119,7 @@ final class RefreshCoordinator {
         || !dirtySections.isEmpty()
         || !dirtyPositions.isEmpty()
         || !deferredSections.isEmpty()
+        || !parkedSections.isEmpty()
         || !deferredPositions.isEmpty();
   }
 
@@ -131,14 +135,20 @@ final class RefreshCoordinator {
   }
 
   void blockChanged(Position changed) {
+    blockChanged(changed, null);
+  }
+
+  void blockChanged(Position changed, ClientCandidates candidates) {
     if (!continuous() || !changed.dimension().equals(lastPlayer.dimension())) return;
     if (broadWorld) {
+      if (candidates != null) candidates.changedAround(changed, readRadius);
       queueSectionsAround(changed, readRadius);
       return;
     }
     for (var offset : worldOffsets)
       try {
         var candidate = changed.offset(-offset.x(), -offset.y(), -offset.z());
+        if (candidates != null) candidates.changed(candidate);
         queuePosition(candidate);
       } catch (ArithmeticException ignored) {
         // No position in this dimension can satisfy an overflowing offset.
@@ -146,6 +156,29 @@ final class RefreshCoordinator {
   }
 
   void playerMoved(Position player) {
+    playerMoved(player, 0);
+  }
+
+  void playerMoved(Position player, double discoveryRadius) {
+    if (!player.equals(discoveryPlayer)) {
+      discoveryPlayer = player;
+      // The player can reach across a section boundary without entering that section.
+      // Wake all nearby parked work now instead of waiting behind the retry rotation.
+      var parked = parkedSections.iterator();
+      while (parked.hasNext()) {
+        var section = parked.next();
+        if (section.dimension().equals(player.dimension())
+            && (long) section.x() * 16 <= player.x() + discoveryRadius
+            && (long) section.x() * 16 + 15 >= player.x() - discoveryRadius
+            && (long) section.y() * 16 <= player.y() + discoveryRadius
+            && (long) section.y() * 16 + 15 >= player.y() - discoveryRadius
+            && (long) section.z() * 16 <= player.z() + discoveryRadius
+            && (long) section.z() * 16 + 15 >= player.z() - discoveryRadius) {
+          parked.remove();
+          dirtySections.add(section);
+        }
+      }
+    }
     if (!continuous() || player.equals(lastPlayer)) return;
     var previous = lastPlayer;
     lastPlayer = player;
@@ -218,12 +251,7 @@ final class RefreshCoordinator {
   }
 
   SectionGroup nextSection(long ticks) {
-    if (ticks % RETRY_TICKS == 0 && !deferredSections.isEmpty()) {
-      var iterator = deferredSections.iterator();
-      var section = iterator.next();
-      iterator.remove();
-      return section;
-    }
+    // Event-driven local work must take priority over the periodic distant retry queue.
     while (!dirtySections.isEmpty()) {
       var iterator = dirtySections.iterator();
       var key = iterator.next();
@@ -231,6 +259,20 @@ final class RefreshCoordinator {
       var section = sectionIndex.get(key);
       if (section != null) return section;
     }
+    if (ticks % RETRY_TICKS == 0 && !parkedSections.isEmpty()) {
+      var iterator = parkedSections.iterator();
+      var section = sectionIndex.get(iterator.next());
+      iterator.remove();
+      return section;
+    }
+    if (ticks % RETRY_TICKS == 0 && !deferredSections.isEmpty()) {
+      var iterator = deferredSections.iterator();
+      var section = iterator.next();
+      iterator.remove();
+      return section;
+    }
+    if (!parkedSections.isEmpty() && nextSection < sections.size())
+      return sections.get(nextSection++);
     if (nextSection < sections.size()) return sections.get(nextSection++);
     if (refreshSection >= 0) {
       if (refreshSection < sections.size()) return sections.get(refreshSection++);
@@ -241,6 +283,12 @@ final class RefreshCoordinator {
 
   void deferSection(SectionGroup section) {
     deferredSections.add(section);
+  }
+
+  /** Bounded by the finite section index; positions omitted at capacity are never forgotten. */
+  void park(Position position) {
+    var section = sectionIndex.get(key(position));
+    if (section != null) parkedSections.add(section.key());
   }
 
   void unsupportedSection() {
@@ -266,6 +314,7 @@ final class RefreshCoordinator {
     nextSection = 0;
     refreshSection = -1;
     deferredSections.clear();
+    parkedSections.removeIf(key -> !sectionIndex.containsKey(key));
     dirtySections.clear();
   }
 

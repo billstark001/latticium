@@ -1,6 +1,7 @@
 package io.github.billstark001.latticium.mc;
 
 import io.github.billstark001.latticium.dsl.Model.*;
+import io.github.billstark001.latticium.planning.Execution;
 import io.github.billstark001.latticium.planning.Host;
 import io.github.billstark001.latticium.planning.MaterialSelector;
 import io.github.billstark001.latticium.planning.Profile;
@@ -31,15 +32,22 @@ final class ClientTargetResolver {
     this.minecraft = minecraft;
     this.session = session;
     this.profile = profile;
-    this.targets = targets == null ? null : TargetSources.guarded(targets, session);
+    var guarded =
+        targets == null
+            ? null
+            : TargetSources.map(TargetSources.guarded(targets, session), this::applyAirPolicy);
+    this.targets =
+        guarded != null
+                && profile.profile().execution().consistency().targets() == Execution.Targets.PINNED
+            ? new TargetSources.Pinned(guarded, session)
+            : guarded;
     this.oracle = oracle;
   }
 
   Host.TargetSource targetSource() {
     if (profile.profile().target() instanceof Profile.Clear)
       return (pos, requestedSession) -> CLEAR;
-    if (profile.profile().target() instanceof Profile.Source)
-      return TargetSources.map(targets, this::applyAirPolicy);
+    if (profile.profile().target() instanceof Profile.Source) return targets;
     return null;
   }
 
@@ -85,7 +93,16 @@ final class ClientTargetResolver {
   }
 
   private TargetCell sourceTarget(Position pos, Host.SessionId requestedSession) {
-    return applyAirPolicy(targets.target(pos, requestedSession));
+    return ClientRevisions.target(requestedSession, pos, targets.target(pos, requestedSession));
+  }
+
+  void pin(Position position, TargetCell target) {
+    if (targets instanceof TargetSources.Pinned pinned && !(target instanceof TargetCell.DontCare))
+      pinned.pin(position, target);
+  }
+
+  void forget(Position position) {
+    if (targets instanceof TargetSources.Pinned pinned) pinned.forget(position);
   }
 
   private TargetCell applyAirPolicy(TargetCell target) {

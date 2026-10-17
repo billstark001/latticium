@@ -76,14 +76,14 @@ class AdaptivePlannerTest {
   }
 
   @Test
-  void changedInputsAndEvictionRestartSmallWithoutReusingPredictions() {
+  void changedInputsResetAndEvictionPromotesOnlyWorkBudgetsWithoutReusingPredictions() {
     var planner = new AdaptivePlanner(2, 16, 1);
     var goal = new TargetCell.Exact(state(9));
     planner.plan(POS, state(0), goal, POLICY, CHAIN, 16);
     assertEquals(4, planner.plan(POS, state(0), goal, POLICY, CHAIN, 16).expandedNodes());
     assertEquals(2, planner.plan(POS, state(1), goal, POLICY, CHAIN, 16).expandedNodes());
     planner.plan(POS.offset(1, 0, 0), state(0), goal, POLICY, CHAIN, 16);
-    assertEquals(2, planner.plan(POS, state(1), goal, POLICY, CHAIN, 16).expandedNodes());
+    assertEquals(4, planner.plan(POS, state(1), goal, POLICY, CHAIN, 16).expandedNodes());
     var fresh =
         planner.plan(
             POS,
@@ -94,8 +94,32 @@ class AdaptivePlannerTest {
             16);
     assertEquals(new Planner.Result.Deferred("Support unloaded"), fresh.result());
     assertEquals(1, fresh.expandedNodes());
-    assertEquals(2, planner.plan(POS, state(1), goal, POLICY, CHAIN, 16).expandedNodes());
+    assertEquals(4, planner.plan(POS, state(1), goal, POLICY, CHAIN, 16).expandedNodes());
+    assertEquals(2, planner.plan(POS, state(2), goal, POLICY, CHAIN, 16).expandedNodes());
     planner.forget(POS);
+    assertEquals(4, planner.plan(POS, state(1), goal, POLICY, CHAIN, 16).expandedNodes());
+    planner.clear();
     assertEquals(2, planner.plan(POS, state(1), goal, POLICY, CHAIN, 16).expandedNodes());
+  }
+
+  @Test
+  void moreRoundRobinCandidatesThanRetryEntriesStillReachSolutionsBeyondTheFirstCap() {
+    var planner = new AdaptivePlanner(2, 16, 1);
+    var solved = new java.util.HashSet<Position>();
+    var goal = new TargetCell.Exact(state(9));
+    for (int round = 0; round < 5 && solved.size() < 3; round++)
+      for (int candidate = 0; candidate < 3; candidate++) {
+        var pos = POS.offset(candidate, 0, 0);
+        if (solved.contains(pos)) continue;
+        var attempt = planner.plan(pos, state(0), goal, POLICY, CHAIN, 16);
+        assertTrue(attempt.expandedNodes() <= 16);
+        if (attempt.result() instanceof Planner.Result.Ready ready) {
+          assertEquals(9, ready.steps().size());
+          assertTrue(
+              ready.steps().stream().noneMatch(step -> step.action() == Planner.Action.BREAK));
+          solved.add(pos);
+        } else assertInstanceOf(Planner.Result.Deferred.class, attempt.result());
+      }
+    assertEquals(3, solved.size());
   }
 }

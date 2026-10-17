@@ -133,16 +133,28 @@ repositories { mavenCentral() }
 spotless {
     java {
         googleJavaFormat("1.30.0")
-        target("scripts/audit/**/*.java", "scripts/minedriver/**/*.java")
+        target(
+            "scripts/audit/**/*.java",
+            "scripts/minedriver/**/*.java",
+            "scripts/fixture/**/*.java",
+        )
     }
     kotlin {
-        target("**/*.kt")
-        targetExclude("**/build/**", "**/.gradle/**", ".tmp/**")
+        target(
+            fileTree(rootDir) {
+                include("**/*.kt")
+                exclude("**/build/**", "**/.gradle/**", ".tmp/**")
+            }
+        )
         ktfmt("0.63").kotlinlangStyle()
     }
     kotlinGradle {
-        target("**/*.gradle.kts")
-        targetExclude("**/build/**", "**/.gradle/**", ".tmp/**")
+        target(
+            fileTree(rootDir) {
+                include("**/*.gradle.kts")
+                exclude("**/build/**", "**/.gradle/**", ".tmp/**")
+            }
+        )
         ktfmt("0.63").kotlinlangStyle()
     }
 }

@@ -12,9 +12,13 @@ The controls screen does not pause the game. The optional setting **Pause on ope
 
 The **Diagnostics** page groups blocked positions by the engine's reason, gives one sample coordinate and a localized suggestion, and reports deferred reads, unsupported sections, automatic activation errors, and registered blueprint providers. It caps displayed reason groups while preserving total counts. **Copy report** copies the displayed diagnostics and task summary to the clipboard. Original engine details can be shown for troubleshooting; arbitrary provider messages retain their original text.
 
-Open settings from the controls screen or `/latticium settings`. On Fabric, installing the optional **Mod Menu** also adds a settings entry. On NeoForge, use **Mods → Latticium → Config**. Both open the same Cloth Config / AutoConfig screen and store client preferences in `config/latticium.json`. Cloth Config is bundled in the main JARs. UI labels, controls, diagnostic categories, and suggestions follow Minecraft's language setting: English, Simplified Chinese, Traditional Chinese, or Japanese. Version 0.0.3 does not add selection rendering or a map; selection and profile authoring commands remain available below.
+Open settings from the controls screen or `/latticium settings`. On Fabric, installing the optional **Mod Menu** also adds a settings entry. On NeoForge, use **Mods → Latticium → Config**. Both open the same Cloth Config / AutoConfig screen and store client preferences in `config/latticium.json`. Cloth Config is bundled in the main JARs. UI labels, controls, diagnostic categories, and suggestions follow Minecraft's language setting: English, Simplified Chinese, Traditional Chinese, or Japanese. Version 0.0.4 does not add selection rendering or a map; selection and profile authoring commands remain available below.
 
 ## A finite selection and an immediate job
+
+For per-profile change tracking, frozen intent, moving-block tasks and finite planning limits,
+see [execution options](execution-options.md). They are available from the selected profile's
+**Execution options** button as well as its JSON definition.
 
 Stand at one corner and run `/latticium pos1`, then stand at the opposite corner and run `/latticium pos2`. Each command prints the recorded block coordinates, such as `pos1 set: (10, 64, -5)`. Save the inclusive box with `/latticium selection save build`. The selection is stored for the current server and dimension. A profile that names an unavailable or empty selection fails to start with an explicit error.
 

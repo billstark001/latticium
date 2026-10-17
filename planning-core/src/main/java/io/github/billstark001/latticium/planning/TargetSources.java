@@ -10,11 +10,55 @@ import java.util.function.UnaryOperator;
 public final class TargetSources {
   private TargetSources() {}
 
+  /** Explicit per-claimed-cell intent, not a frozen copy of an entire blueprint. */
+  public static final class Pinned implements Host.TargetSource {
+    private final Host.TargetSource source;
+    private final Host.SessionId session;
+    private final java.util.Map<io.github.billstark001.latticium.dsl.Model.Position, TargetCell>
+        cells = new java.util.HashMap<>();
+
+    public Pinned(Host.TargetSource source, Host.SessionId session) {
+      this.source = guarded(source, session);
+      this.session = session;
+    }
+
+    public void pin(
+        io.github.billstark001.latticium.dsl.Model.Position position, TargetCell target) {
+      if (target instanceof TargetCell.Unknown || target instanceof TargetCell.DontCare)
+        throw new IllegalArgumentException("Only a concrete target can be pinned");
+      cells.putIfAbsent(position, Objects.requireNonNull(target));
+    }
+
+    public void forget(io.github.billstark001.latticium.dsl.Model.Position position) {
+      cells.remove(position);
+    }
+
+    @Override
+    public TargetCell target(
+        io.github.billstark001.latticium.dsl.Model.Position position, Host.SessionId requested) {
+      if (!session.equals(requested))
+        return new TargetCell.Unknown("Pinned target session changed");
+      var pinned = cells.get(position);
+      return pinned == null ? source.target(position, requested) : pinned;
+    }
+  }
+
   /** Keeps provider failures and stale sessions explicit rather than aborting a client tick. */
   public static Host.TargetSource guarded(Host.TargetSource provider, Host.SessionId session) {
     Objects.requireNonNull(provider, "provider");
     Objects.requireNonNull(session, "session");
     return new Host.TargetSource() {
+      @Override
+      public Optional<Host.SourceRevision> revision(Host.SessionId requestedSession) {
+        if (!session.equals(requestedSession)) return Optional.empty();
+        try {
+          var revision = provider.revision(session);
+          return revision == null ? Optional.empty() : revision;
+        } catch (RuntimeException unavailable) {
+          return Optional.empty();
+        }
+      }
+
       @Override
       public TargetCell target(
           io.github.billstark001.latticium.dsl.Model.Position position,
@@ -62,6 +106,11 @@ public final class TargetSources {
     Objects.requireNonNull(provider, "provider");
     Objects.requireNonNull(transform, "transform");
     return new Host.TargetSource() {
+      @Override
+      public Optional<Host.SourceRevision> revision(Host.SessionId session) {
+        return provider.revision(session);
+      }
+
       @Override
       public TargetCell target(
           io.github.billstark001.latticium.dsl.Model.Position position, Host.SessionId session) {

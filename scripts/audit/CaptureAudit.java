@@ -12,7 +12,7 @@ import net.minecraft.client.Minecraft;
 final class CaptureAudit {
   static void run(AuditProbe probe, Minecraft minecraft, Position position) throws Exception {
     var session = new Host.SessionId();
-    var epochs = new Host.Epochs(0, 0, 0, 0, 0, 0);
+    var epochs = ClientRegistryState.epochs();
     var key =
         new Host.SectionCaptureKey(
             session,

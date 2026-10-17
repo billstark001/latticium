@@ -25,10 +25,17 @@ public final class Host {
       long registry, long world, long target, long selection, long inventory, long rules) {}
 
   /** Session and epochs with optional facts for action-only rechecks. */
-  public record Snapshot(SessionId session, Epochs epochs, Facts facts) {
+  public record Snapshot(SessionId session, Epochs epochs, Facts facts, Revisions.Stamp inputs) {
+    /** Unqualified legacy snapshots require live checks; they grant no reusable lease. */
+    public Snapshot(SessionId session, Epochs epochs, Facts facts) {
+      this(session, epochs, facts, null);
+    }
+
     public Snapshot {
       Objects.requireNonNull(session, "session");
       Objects.requireNonNull(epochs, "epochs");
+      if (inputs != null && !inputs.session().equals(session))
+        throw new IllegalArgumentException("Snapshot revision session mismatch");
     }
   }
 
@@ -80,6 +87,11 @@ public final class Host {
     /** Returns a target cell or an explicit unknown result for unavailable target data. */
     TargetCell target(Position pos, SessionId session);
 
+    /** Empty/unreliable signals require fresh point reads; metadata alone is not a cache lease. */
+    default Optional<SourceRevision> revision(SessionId session) {
+      return Optional.empty();
+    }
+
     /**
      * Optional immutable target window captured in the requested session. Point reads remain the
      * fallback. Providers must perform the same identity, bounds and residency checks as target().
@@ -90,18 +102,37 @@ public final class Host {
     }
   }
 
+  public record SourceRevision(String token, Revisions.Reliability reliability) {
+    public SourceRevision {
+      Objects.requireNonNull(token);
+      Objects.requireNonNull(reliability);
+    }
+  }
+
   public record Preconditions(
       SessionId session,
       Epochs epochs,
       Position position,
       BlockState expectedCurrent,
-      TargetCell expectedTarget) {
+      TargetCell expectedTarget,
+      Revisions.Stamp inputs) {
+    public Preconditions(
+        SessionId session,
+        Epochs epochs,
+        Position position,
+        BlockState expectedCurrent,
+        TargetCell expectedTarget) {
+      this(session, epochs, position, expectedCurrent, expectedTarget, null);
+    }
+
     public Preconditions {
       Objects.requireNonNull(session, "session");
       Objects.requireNonNull(epochs, "epochs");
       Objects.requireNonNull(position, "position");
       Objects.requireNonNull(expectedCurrent, "expectedCurrent");
       Objects.requireNonNull(expectedTarget, "expectedTarget");
+      if (inputs != null && !inputs.session().equals(session))
+        throw new IllegalArgumentException("Precondition revision session mismatch");
     }
   }
 

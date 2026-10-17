@@ -8,7 +8,8 @@ param(
         'litematica-fabric-26.2', 'litematica-fabric-26.3', 'forgematica-neoforge-26.2'),
     [string]$MineDriverRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) '../minedriver'),
     [string]$SchematicsDirectory = '',
-    [ValidateSet('LatticiumScenario', 'UiScenario', 'StartupScenario', 'ActivationScenario', 'ResidencyScenario', 'BridgeConcurrencyScenario')]
+    [string]$ServerConfiguration = '',
+    [ValidateSet('LatticiumScenario', 'UiScenario', 'StartupScenario', 'ActivationScenario', 'ResidencyScenario', 'BridgeConcurrencyScenario', 'PlanningScenario', 'RevisionScenario', 'DynamicScenario', 'DedicatedScenario', 'TravelScenario', 'PerformanceScenario', 'StreamingScenario', 'ModdedScenario', 'JarInstallScenario')]
     [string]$Scenario = 'LatticiumScenario',
     [ValidateRange(30, 3600)][int]$TimeoutSeconds = 600,
     [switch]$AcceptClothLogoWarning,
@@ -50,7 +51,10 @@ try {
                 "-Dminedriver.root=$MineDriverRoot", "-Dminedriver.target=$auditTarget",
                 "-Dminedriver.scenario=$Scenario", "-Dminedriver.timeoutMillis=$($TimeoutSeconds * 1000)",
                 ":${auditKind}:${auditTarget}:mineDriverCheck", '--console=plain')
+            if ($Scenario -eq 'JarInstallScenario') { $auditArguments += '-Dminedriver.jarInstall=true' }
+            if ($Scenario -in @('LatticiumScenario', 'ModdedScenario', 'StreamingScenario')) { $auditArguments += '-Dminedriver.fixture=true' }
             if ($auditTarget -match 'fabric') { $auditArguments += '-Dminedriver.disableGametest=true' }
+            if ($ServerConfiguration) { $auditArguments += "-Dminedriver.server=$ServerConfiguration" }
             if (($AcceptClothLogoWarning -or $AcceptKnownLogoWarnings) -and $auditTarget -match 'neoforge-26.2$') {
                 $auditArguments += '-Dminedriver.acceptClothLogoWarning=true'
             }

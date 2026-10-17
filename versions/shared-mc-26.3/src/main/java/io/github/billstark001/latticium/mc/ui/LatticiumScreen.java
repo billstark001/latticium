@@ -24,6 +24,7 @@ public final class LatticiumScreen extends Screen {
   private Component failure;
   private UiTextList text;
   private Button start;
+  private Button execution;
   private Button pause;
   private Button cancel;
   private Button refresh;
@@ -98,9 +99,22 @@ public final class LatticiumScreen extends Screen {
               96,
               () -> client.start(minecraft, selectedProfile));
       start.setTooltip(Tooltip.create(UiText.tr("screen.start_tip")));
+      execution =
+          button(
+              "screen.execution",
+              left,
+              84,
+              panelWidth,
+              () ->
+                  minecraft.gui.setScreen(
+                      ProfileExecutionScreen.screen(
+                          this,
+                          client.profileJson(selectedProfile),
+                          json -> run(() -> client.loadProfile(json)))));
+      execution.setTooltip(Tooltip.create(UiText.tr("screen.execution_tip")));
       text =
           addRenderableWidget(
-              new UiTextList(minecraft, panelWidth, Math.max(24, height - 188), 88, left));
+              new UiTextList(minecraft, panelWidth, Math.max(24, height - 212), 112, left));
       pause =
           button(
               "screen.pause",
@@ -174,6 +188,7 @@ public final class LatticiumScreen extends Screen {
       if (profiles.isEmpty())
         rows.add(UiText.tr("screen.load_hint").withStyle(ChatFormatting.GRAY));
       var job = state.job();
+      execution.active = state.inWorld() && !selectedProfile.isEmpty();
       start.active =
           state.inWorld()
               && !selectedProfile.isEmpty()

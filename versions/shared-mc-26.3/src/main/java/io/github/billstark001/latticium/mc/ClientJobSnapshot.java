@@ -26,6 +26,7 @@ public record ClientJobSnapshot(
     MONITORING,
     COMPLETE,
     BLOCKED,
+    CANCELLED,
     BUDGET_EXHAUSTED
   }
 

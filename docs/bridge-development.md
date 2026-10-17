@@ -27,7 +27,11 @@ Each preview and job has a distinct `SessionId`. On `finiteBounds`, record the s
 
 The current bridges delegate identity, bounds and overlap checks to the neutral `BlueprintSnapshots` helper. Its supplier produces a fresh `View` containing the world and placement identities, optional revision, enabled bounds, conflicting placement bounds, and a cell reader. Bounds are sorted so source map iteration order cannot invalidate a session; duplicate regions remain present because they signal overlap. The helper uses weak session maps to avoid retaining abandoned previews, and establishes each session only once. Observing a changed or removed placement invalidates that session permanently: restoring the old metadata cannot revive it, and a new job/preview needs a fresh session. Repeating `finiteBounds` cannot authorize a different placement under an old session.
 
-The three bundled bridges include the placement UUID, schematic metadata modification time and unsaved-change flag in their revision token. The UUID alone identifies the placement and is not a content revision. These source-mod markers catch reported edits even when bounds stay equal. They cannot prove that every direct container mutation advances a marker, so unreported in-place edits remain a limitation; do not treat the token as a general cache lease. If a source API exposes a stronger monotonic lifecycle/content revision, use it and test the available change signal.
+The three bundled bridges include the placement UUID, schematic metadata modification time and unsaved-change flag in their revision token. The UUID alone identifies the placement and is not a content revision. These source-mod markers catch reported edits even when bounds stay equal. `TargetSource.revision(session)` therefore advertises these markers as `SHORT_LIVED`, rather than a reusable cache/worker lease. Live tasks re-read the actual target cell. A direct container edit becomes visible when the source mod publishes/rebuilds its native schematic world; pending edits outside that API cannot be inferred from unchanged metadata. If a source API exposes a stronger monotonic lifecycle/content revision, advertise `VERSIONED` only after testing every relevant mutation and residency signal. Omitting the optional capability preserves fresh point reads.
+
+Profiles can explicitly pin each claimed cell's target. This freezes task intent for that cell;
+it does not change the provider's revision reliability or freeze the entire placement. Preview
+and running-job namespaces remain separate. See [execution options](execution-options.md).
 
 ## Target semantics
 
@@ -55,6 +59,6 @@ At minimum, verify in a live client:
 4. Multiple subregions, overlaps, placement switch/removal, world switch and a second preview while a job runs cannot reuse stale targets.
 5. The bridge JAR metadata enforces matching dependencies; preview and real interaction use the expected source version.
 
-Record each Minecraft/loader/source-mod version and result in the [validation matrix](26.2-26.3-validation.md). Separate title-screen, read-only target/preview, small gameplay and large survival/dedicated-server evidence. The current development probes cover the first three categories; large survival and dedicated-server construction remain open.
+Record each Minecraft/loader/source-mod version and result in the [validation matrix](26.2-26.3-validation.md). Separate title-screen, read-only target/preview, small gameplay and large survival/dedicated-server evidence. The [issues #2/#3 evidence](issues-2-3-validation.md) records the expanded fixtures and their exact runtime limits. Artifact JAR discovery under a development game launch is distinct from general production-modpack certification.
 
 Session metadata compares world and placement identities through weak references. A completed preview or job must not keep a disconnected client world or removed schematic alive through the provider cache. Bounds and immutable revision tokens remain neutral values. The helper rejects a stale or collected identity conservatively.

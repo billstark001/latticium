@@ -57,6 +57,23 @@ public final class UiScenario implements Scenario {
           context.onClient(() -> LatticiumClient.get().uiState().job().paused()),
           "Pause button must pause the job");
       context.screenshot("tasks-" + language);
+      String before = context.onClient(() -> LatticiumClient.get().status());
+      context.click(Selector.key("latticium.screen.execution"));
+      context.require(
+          context.onClient(
+              () -> !(Minecraft.getInstance().gui.screen() instanceof LatticiumScreen)),
+          "Execution options must open the per-profile editor");
+      context.call("ui.tree");
+      context.screenshot("execution-" + language);
+      context.call("input.key", Map.of("key", "ESCAPE"));
+      context.call(
+          "wait.state", Map.of("path", "screen", "equals", LatticiumScreen.class.getName()));
+      context.require(
+          context.onClient(
+              () ->
+                  LatticiumClient.get().uiState().job() != null
+                      && LatticiumClient.get().uiState().job().paused()),
+          "Opening and cancelling execution options must preserve the paused task: " + before);
       context.click(Selector.key("latticium.screen.diagnostics"));
       inspectWidgets(context);
       context.call(
@@ -90,6 +107,68 @@ public final class UiScenario implements Scenario {
           context.onClient(() -> Minecraft.getInstance().gui.screen() == null),
           "Done must return to gameplay");
     }
+    saveExecutionOptions(context);
+  }
+
+  private static void saveExecutionOptions(ProbeContext context) {
+    var saved = new String[1];
+    context.onClient(
+        () -> {
+          var mc = Minecraft.getInstance();
+          mc.gui.setScreen(
+              io.github.billstark001.latticium.mc.ui.ProfileExecutionScreen.screen(
+                  null,
+                  """
+          {"schema":1,"id":"test:ui_save","scope":"box(0,0,0,0,0,0)",
+           "select":{"where":"all()"},"target":{"clear":true},"policy":{"break":"deny"}}
+          """,
+                  value -> saved[0] = value));
+          return null;
+        });
+    context.call("render.await", Map.of("frames", 3));
+    clickClothButton(context, "latticium.execution.value.cell");
+    context.call("render.await", Map.of("frames", 3));
+    clickClothButton(context, "text.cloth-config.save_and_done");
+    context.require(saved[0] != null, "Execution editor did not invoke its save callback");
+    var profile = new io.github.billstark001.latticium.planning.ProfileReader().read(saved[0]);
+    context.require(
+        profile.execution().consistency().granularity()
+            == io.github.billstark001.latticium.planning.Execution.Granularity.SECTION,
+        "Execution editor did not save the selected consistency policy");
+    context.require(
+        profile.id().toString().equals("test:ui_save"),
+        "Execution editor changed profile identity");
+  }
+
+  private static void clickClothButton(ProbeContext context, String key) {
+    // Cloth list entries use isActive for narration, not editability; use actual child bounds.
+    var point =
+        context.onClient(
+            () -> {
+              var widget = findButton(Minecraft.getInstance().gui.screen(), key);
+              if (widget == null || !widget.active)
+                throw new AssertionError("Missing enabled Cloth button " + key);
+              return Map.of(
+                  "x",
+                  widget.getX() + widget.getWidth() / 2.0,
+                  "y",
+                  widget.getY() + widget.getHeight() / 2.0);
+            });
+    context.call("input.click", point);
+  }
+
+  private static AbstractWidget findButton(
+      net.minecraft.client.gui.components.events.GuiEventListener node, String key) {
+    if (node instanceof AbstractWidget widget
+        && widget.getMessage().getContents()
+            instanceof net.minecraft.network.chat.contents.TranslatableContents contents
+        && contents.getKey().equals(key)) return widget;
+    if (node instanceof net.minecraft.client.gui.components.events.ContainerEventHandler container)
+      for (var child : container.children()) {
+        var found = findButton(child, key);
+        if (found != null) return found;
+      }
+    return null;
   }
 
   private static void inspectWidgets(ProbeContext context) {

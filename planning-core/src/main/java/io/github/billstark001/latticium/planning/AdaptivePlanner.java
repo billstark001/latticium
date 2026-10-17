@@ -19,6 +19,7 @@ public final class AdaptivePlanner {
   private final int initialNodes;
   private final int maxNodes;
   private final int maxRemembered;
+  private int pressureFloor;
   private final Map<Position, Retry> retries = new LinkedHashMap<>(16, 0.75f, true);
 
   public AdaptivePlanner(int initialNodes, int maxNodes, int maxRemembered) {
@@ -27,13 +28,15 @@ public final class AdaptivePlanner {
     this.initialNodes = initialNodes;
     this.maxNodes = maxNodes;
     this.maxRemembered = maxRemembered;
+    pressureFloor = initialNodes;
   }
 
   /**
    * Rebuilds the search from fresh facts on every call. Only a resumable node-budget deferral
    * increases the next attempt, doubling up to the configured cap. Missing facts never prove
    * NoPlan. The returned expansion count never exceeds the caller's remaining tick budget. Eviction
-   * forgets a retry budget, not a target, action, or safety precondition.
+   * promotes a bounded shared starting floor, so round-robin candidates cannot keep evicting one
+   * another back to the initial cap. No prediction or safety precondition survives eviction.
    */
   public Attempt plan(
       Position pos,
@@ -46,13 +49,17 @@ public final class AdaptivePlanner {
       throw new IllegalArgumentException("Positive tick budget required");
     var input = new Input(current, target, policy);
     var retry = retries.get(pos);
-    int nodes = retry != null && input.equals(retry.input()) ? retry.nodes() : initialNodes;
+    int nodes =
+        retry == null ? pressureFloor : input.equals(retry.input()) ? retry.nodes() : initialNodes;
     var search = new Planner().start(pos, current, target, policy, oracle);
     var result = search.advance(Math.min(nodes, remainingTickNodes));
     if (search.pending()) {
       int next = (int) Math.min(maxNodes, (long) nodes * 2);
       retries.put(pos, new Retry(input, next));
-      if (retries.size() > maxRemembered) retries.remove(retries.keySet().iterator().next());
+      if (retries.size() > maxRemembered) {
+        var evicted = retries.remove(retries.keySet().iterator().next());
+        pressureFloor = Math.max(pressureFloor, evicted.nodes());
+      }
     } else retries.remove(pos);
     return new Attempt(result, Math.toIntExact(search.expandedNodes()));
   }
@@ -64,5 +71,6 @@ public final class AdaptivePlanner {
 
   public void clear() {
     retries.clear();
+    pressureFloor = initialNodes;
   }
 }

@@ -94,18 +94,21 @@ final class ClientJobView {
       int blocked,
       boolean exhausted,
       boolean paused,
-      JobController active) {
+      JobController active,
+      boolean cancelled) {
     boolean waiting = active != null && active.status() == JobController.Status.WAITING;
     var phase =
-        ClientJobSnapshot.phase(
-            paused,
-            waiting,
-            exhausted,
-            refresh.hasScanWork(),
-            refresh.continuous(),
-            pending,
-            blocked,
-            refresh.unsupportedCount());
+        cancelled
+            ? ClientJobSnapshot.Phase.CANCELLED
+            : ClientJobSnapshot.phase(
+                paused,
+                waiting,
+                exhausted,
+                refresh.hasScanWork(),
+                refresh.continuous(),
+                pending,
+                blocked,
+                refresh.unsupportedCount());
     return new ClientJobSnapshot(
         profile.id().toString(),
         phase,

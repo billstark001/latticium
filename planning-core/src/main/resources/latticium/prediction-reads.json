@@ -1,0 +1,6 @@
+[
+  {"action":"PLACE","columns":["STATE","FLUID","SOLID"],"clicked":true},
+  {"action":"INTERACT","columns":["STATE"],"clicked":true},
+  {"action":"BREAK","columns":["STATE","FLUID"],"clicked":false},
+  {"action":"USE_ITEM","columns":["STATE","FLUID","SOLID"],"clicked":true}
+]

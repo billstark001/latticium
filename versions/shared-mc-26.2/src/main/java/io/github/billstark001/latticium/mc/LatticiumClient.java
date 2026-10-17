@@ -89,6 +89,7 @@ public final class LatticiumClient {
 
   public void tick(Minecraft minecraft) {
     if (!minecraft.isSameThread()) throw new IllegalStateException("Tick on client thread");
+    ClientRevisions.sampleWorld(minecraft);
     if (world != minecraft.level) {
       if (job != null) job.leaveWorld();
       settling.forEach(ClientJob::leaveWorld);
@@ -218,6 +219,7 @@ public final class LatticiumClient {
     var dimension = MinecraftStateCodec.id(world.dimension().identifier());
     var position = new Position(dimension, blockPos.getX(), blockPos.getY(), blockPos.getZ());
     if (state != null) serverUpdates.record(position, MinecraftStateCodec.state(state));
+    ClientRevisions.blockUpdated(position);
     if (job != null) job.noteBlockUpdate(position);
     if (lastActivationPlayer != null
         && lastActivationPlayer.dimension().equals(position.dimension())
@@ -229,6 +231,10 @@ public final class LatticiumClient {
 
   ServerUpdates.Update serverUpdate(Position pos) {
     return serverUpdates.get(pos);
+  }
+
+  ServerUpdates.Update expectedUpdate(Position pos, BlockState expected, long revision) {
+    return serverUpdates.expectedAfter(pos, expected, revision);
   }
 
   public void saveSelection(Minecraft minecraft, String name) {
@@ -255,6 +261,7 @@ public final class LatticiumClient {
       else selections.put(name, previous);
       throw error;
     }
+    ClientRevisions.edited("selection_edit", name);
     activationDirty = true;
   }
 
@@ -273,6 +280,7 @@ public final class LatticiumClient {
     }
     autoBindings.remove(id);
     autoTrackers.remove(id);
+    ClientRevisions.edited("rule_edit", id);
     activationDirty = true;
   }
 
@@ -319,15 +327,13 @@ public final class LatticiumClient {
   }
 
   public Map<String, Boolean> capabilities() {
-    return Map.of(
-        "finite_scanning",
-        true,
-        "ordinary_placement",
-        true,
-        "normal_break",
-        true,
-        "blueprint_provider",
-        providers.hasBlueprint());
+    return providers.capabilities();
+  }
+
+  public String profileJson(String id) {
+    var json = profiles.get(id);
+    if (json == null) throw new IllegalArgumentException("Unknown profile: " + id);
+    return json;
   }
 
   /** Read-only bounded scan; the result marks sections that remain unexamined or unavailable. */
@@ -397,23 +403,16 @@ public final class LatticiumClient {
       }
       autoBindings.remove(id);
       autoTrackers.remove(id);
+      ClientRevisions.edited("rule_edit", id);
     }
     if (job != null) job.cancel();
+    replacement.acceptCurrentIntent();
     job = replacement;
     activeAutoId = null;
   }
 
   private Map<String, List<Bounds>> jobSelections(Profile profile, Host.SessionId jobSession) {
-    var jobSelections = new HashMap<>(selections);
-    if (profile.target() instanceof Profile.Source external) {
-      var blueprint = providers.blueprint(external.id());
-      if (blueprint != null) {
-        var bounds = blueprint.finiteBounds("active_blueprint", jobSession);
-        if (bounds.isEmpty()) throw new IllegalStateException("No active blueprint selection");
-        jobSelections.put("active_blueprint", bounds);
-      }
-    }
-    return jobSelections;
+    return providers.jobSelections(profile, jobSession, selections);
   }
 
   public void startInline(Minecraft minecraft, String json) {

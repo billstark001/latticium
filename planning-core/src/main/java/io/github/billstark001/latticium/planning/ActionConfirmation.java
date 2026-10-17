@@ -30,4 +30,24 @@ public record ActionConfirmation(
         ? Host.Observation.TIMED_OUT
         : Host.Observation.STILL_PENDING;
   }
+
+  /**
+   * An opt-in transient operation confirms that the expected server transition occurred, not that
+   * its result remained stable. An unloaded cell, forgotten payload or local prediction is never
+   * evidence. The caller stops a continuing break immediately after this confirmation.
+   */
+  public Host.Observation observeTransition(
+      BlockState current,
+      ServerUpdates.Update latest,
+      ServerUpdates.Update expectedPayload,
+      long tick,
+      long timeoutTicks) {
+    if (current != null
+        && latest != null
+        && expectedPayload != null
+        && expectedPayload.revision() > serverRevision
+        && expectedPayload.revision() <= latest.revision()
+        && expected.equals(expectedPayload.state())) return Host.Observation.CONFIRMED;
+    return observe(current, latest, tick, timeoutTicks);
+  }
 }

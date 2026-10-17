@@ -33,7 +33,67 @@ gradle.beforeProject { project ->
                 disabledModIds.addAll('fabric-gametest-api-v1', 'fabric-client-gametest-api-v1')
             }
         }
+        if (System.getProperty('minedriver.fixture', 'false') == 'true') {
+            project.afterEvaluate {
+                def loader = project.name.contains('neoforge') ? 'neoforge' : 'fabric'
+                def fixture = project.sourceSets.create('auditFixture')
+                fixture.java.setSrcDirs([project.rootProject.file('scripts/fixture/common'), project.rootProject.file('scripts/fixture/' + loader)])
+                fixture.compileClasspath = project.sourceSets.main.compileClasspath + project.sourceSets.main.output
+                def fixtureJar = project.tasks.register('auditFixtureJar', Jar) {
+                    dependsOn project.tasks.named(fixture.classesTaskName)
+                    from fixture.output
+                    from project.rootProject.file('scripts/fixture/common-resources')
+                    from project.rootProject.file('scripts/fixture/' + loader + '-resources')
+                    archiveFileName.set('latticium-acceptance-fixture.jar')
+                    destinationDirectory.set(project.layout.buildDirectory.dir('audit-fixture-jars'))
+                }
+                def seed = project.tasks.register('auditFixtureSeed', Sync) {
+                    dependsOn fixtureJar
+                    from fixtureJar
+                    into project.layout.buildDirectory.dir('audit-fixture-seed/mods')
+                }
+                project.mineDriver.seedFiles.from(project.layout.buildDirectory.dir('audit-fixture-seed/mods'))
+                project.tasks.withType(io.github.billstark001.minedriver.gradle.MineDriverRun).configureEach { dependsOn seed }
+            }
+        }
+        if (System.getProperty('minedriver.jarInstall', 'false') == 'true') {
+            project.afterEvaluate {
+                def version = project.name.endsWith('26.2') ? '26.2' : '26.3'
+                def loader = project.name.contains('neoforge') ? 'neoforge' : 'fabric'
+                def mainProject = project.rootProject.project(':versions:' + loader + '-' + version)
+                def installedProjects = project == mainProject ? [mainProject] : [mainProject, project]
+                def install = project.tasks.register('auditJarInstall', Sync) {
+                    installedProjects.each { installed ->
+                        def jarTask = installed.tasks.named('jar')
+                        dependsOn jarTask
+                        from jarTask
+                    }
+                    into project.layout.buildDirectory.dir('audit-jar-install/mods')
+                }
+                project.tasks.withType(io.github.billstark001.minedriver.gradle.MineDriverRun).configureEach {
+                  dependsOn install
+                  seedFiles.from(project.layout.buildDirectory.dir('audit-jar-install/mods'))
+                  systemProperty 'latticium.audit.jarInstall', 'true'
+                  systemProperty 'latticium.audit.expectBridge', (project != mainProject).toString()
+                  doFirst {
+                    def rootPath = project.rootProject.projectDir.toPath()
+                    classpath = classpath.filter { file ->
+                        def normalized = file.toPath().toAbsolutePath().normalize()
+                        !(normalized.startsWith(rootPath) && file.path.replace('\\', '/').matches('.*?/build/(classes|resources|libs)/.*'))
+                    }
+                    environment 'MOD_CLASSES', ''
+                    systemProperty 'fml.modFolders', ''
+                    systemProperty 'fabric.classPathGroups', ''
+                    systemProperty 'fabric.addMods', ''
+                  }
+                }
+            }
+        }
         project.tasks.withType(io.github.billstark001.minedriver.gradle.MineDriverRun).configureEach {
+            systemProperty 'latticium.audit.expectBridge', project.path.startsWith(':integrations:').toString()
+            if (System.getProperty('minedriver.server')) {
+                systemProperty 'latticium.audit.server', System.getProperty('minedriver.server')
+            }
             if (System.getProperty('minedriver.schematics')) {
                 systemProperty 'latticium.audit.schematics', System.getProperty('minedriver.schematics')
             }
